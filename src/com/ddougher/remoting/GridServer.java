@@ -2,6 +2,7 @@ package com.ddougher.remoting;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.channels.ByteChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -18,6 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+
+import javax.imageio.stream.IIOByteBuffer;
 
 /**
  * Parallel Processing is the new frontier. Doing it smoothly, transparently, and seamlessly... is the vehicle that will get us across.
@@ -96,10 +99,13 @@ public class GridServer implements Runnable, Closeable {
 	private class GridEndpoint {
 
 		private SelectionKey key;
-		private Queue<Writeable> outputQueue = new LinkedList<Writeable>();
-		private Queue<Readable> classLoaderQueue = new LinkedList<Readable>();
+		private Queue<?> outputQueue = new LinkedList<?>();
+		private Queue<?> classLoaderQueue = new LinkedList<?>();
 		private HashMap<UUID,Object> activeObjects = new HashMap<UUID, Object>();
-		private ClassLoader remoteCachingClassLoader;
+		private ClassLoader classLoader;
+
+		private Callable<?> activeReadOperation = null;
+		private ByteBuffer readBuffer = ByteBuffer.allocateDirect(16536);
 		
 		public GridEndpoint(SelectionKey key) {
 			super();
@@ -114,9 +120,17 @@ public class GridServer implements Runnable, Closeable {
 		
 
 		public void write() {
-			// writes are basically just an output queue
+			/*
+			 * writes queued as completable futures and are one of:
+			 * 	a) response to a method invocation
+			 * 	b) request to remote classloader
+			 * 
+			 * once a remote class writer completes, it goes to the classloader queue until the appropriate response has returned. 
+			 */
 		}
 
+		// this is an asynchronous 'stack push back' parser. As long as progress can be made it will. When it cant, it saves its location
+		// and returns control. 
 		public void read() {
 			/* 
 			 * every read will be one of:
@@ -125,8 +139,63 @@ public class GridServer implements Runnable, Closeable {
 			 *  c) invoke a method on an active object (always happens on the cachedThreadPool)
 			 *  d) response to an outstanding class loader invocation (typically, completes a waiting future)
 			 */
+			((ByteChannel)key.channel()).read(readBuffer);
+
+			readBuffer.flip();
+
+			Callable<?> c = activeReadOperation;
+
+			if (c == null)
+				c = () -> ifBytesAvailable(4, this::readDiscoverOperation);
+
+			while (null != c) 
+				c = (Callable<?>)c.call();
+
+			readBuffer.compact();
+			
 		}
 
+		private Callable<?> ifBytesAvailable(int bytes, Callable<?> reference) {
+			if (readBuffer.remaining() >= bytes) {
+				return reference;
+			} else {
+				activeReadOperation = reference;
+				return null;
+			}
+		}
+		
+		private Callable<?> readDiscoverOperation() {
+			switch(readBuffer.getInt()) 
+			{
+				case 1:
+					return ifBytesAvailable(4, this::readCreateObjectLength);
+				case 2:
+					return this::readDeleteObject;
+				case 3:
+					return this::readInvokeObject;
+				case 4:
+					return this::readClassloaderResult;
+			}
+			return null;
+		}
+
+		private Callable<?> readCreateObjectLength() {
+			return null;
+		}
+		
+		private Callable<?> readDeleteObject() {
+			return null;
+		}
+
+		public Callable<?> readInvokeObject() {
+			return null;
+		}
+		
+		public Callable<?> readClassloaderResult() {
+			return null;
+		}
+		
+		
 	}
 
 }
