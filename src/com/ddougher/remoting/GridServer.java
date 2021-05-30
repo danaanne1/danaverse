@@ -8,9 +8,11 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -95,25 +97,35 @@ public class GridServer implements Runnable, Closeable {
 
 		private SelectionKey key;
 		private Queue<Writeable> outputQueue = new LinkedList<Writeable>();
-		private LinkedHashSet<Readable> activeCommands = new LinkedHashSet<Readable>();
+		private Queue<Readable> classLoaderQueue = new LinkedList<Readable>();
+		private HashMap<UUID,Object> activeObjects = new HashMap<UUID, Object>();
+		private ClassLoader remoteCachingClassLoader;
 		
 		public GridEndpoint(SelectionKey key) {
 			super();
 			this.key = key;
 			
-			outputQueue.add(new )
-			
+			// stage the channel challenge before anything else
+			ServiceBootStrap challenge = new ServiceBootstrap();
+			outputQueue.add(challenge);
+			activeCommands.add(challenge);
 		}
 		
 		
 
 		public void write() {
-			((ByteChannel)key.channel()).write()
-			
-			
+			// writes are basically just an output queue
 		}
 
-		public void read() {}
+		public void read() {
+			/* 
+			 * every read will be one of:
+			 * 	a) create an object 
+			 *  b) delete an object 
+			 *  c) invoke a method on an active object (always happens on the cachedThreadPool)
+			 *  d) response to an outstanding class loader invocation (typically, completes a waiting future)
+			 */
+		}
 
 	}
 
