@@ -2,11 +2,17 @@ package com.ddougher.remoting;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.channels.ByteChannel;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.Queue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -79,15 +85,33 @@ public class GridServer implements Runnable, Closeable {
 		closed = true;
 	}
 
-	private class GridEndpoint {
-		private SelectionKey key;
+	private static interface Writeable {
+	}
 
+	private static interface Readable {
+	}
+	
+	private class GridEndpoint {
+
+		private SelectionKey key;
+		private Queue<Writeable> outputQueue = new LinkedList<Writeable>();
+		private LinkedHashSet<Readable> activeCommands = new LinkedHashSet<Readable>();
+		
 		public GridEndpoint(SelectionKey key) {
 			super();
 			this.key = key;
+			
+			outputQueue.add(new )
+			
 		}
+		
+		
 
-		public void write() {}
+		public void write() {
+			((ByteChannel)key.channel()).write()
+			
+			
+		}
 
 		public void read() {}
 
