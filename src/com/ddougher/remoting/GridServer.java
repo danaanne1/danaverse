@@ -79,7 +79,7 @@ public class GridServer {
 		try {
 			Object ob = in.readObject();
 			getClass()
-				.getMethod("execute", new Class[] { ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class})
+				.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
 				.invoke(this, ob, out, objects, classLoader);
 		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
