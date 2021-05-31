@@ -2,13 +2,11 @@ package com.ddougher.remoting;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.lang.reflect.InvocationTargetException;
 import java.net.SocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
@@ -51,14 +49,14 @@ public class GridServer {
 		while (!closed) {
 			try {
 				SocketChannel sc = channel.accept();
-				new Thread(()->handleIncomingConnection(sc)).start();
+				new Thread(withStackDumpOnException(()->respondTo(sc))).start();
 			} catch (IOException e) {
 				e.printStackTrace(System.err);
 			}
 		}
 	}
 
-	void handleIncomingConnection(SocketChannel channel) {
+	void respondTo(SocketChannel channel) throws IOException {
 		try (
 				InputStream cin = Channels.newInputStream(channel);
 				BufferedInputStream bin = new BufferedInputStream(cin);
@@ -70,37 +68,49 @@ public class GridServer {
 			Map<UUID,Object> objects = new ConcurrentHashMap<>();
 			ClassLoader classLoader = null;
 			while (true) {
-				handleIncomingRequest(oin, oout, objects, classLoader);
+				readIncomingRequest(oin, oout, objects, classLoader);
 			}
-		} catch (IOException e) {
-			e.printStackTrace(System.err);
+		} finally {
+			channel.close();
 		}
 	}
 
-	void handleIncomingRequest(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects, ClassLoader classLoader) {
+	void readIncomingRequest(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects, ClassLoader classLoader) throws IOException  {
 		try {
 			Object ob = in.readObject();
-			if (ob instanceof CreateObjectRequest) {
-				CreateObjectRequest req = (CreateObjectRequest)ob;
-				cachedThreadPool.submit(() -> handleCreateObject(req,out,objects,classLoader));
-			}
-		} catch (Exception e) {
+			getClass()
+				.getMethod("execute", new Class[] { ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class})
+				.invoke(this, ob, out, objects, classLoader);
+		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
 		}
 	}
 	
-	void handleCreateObject(CreateObjectRequest req, ObjectOutputStream out, Map<UUID, Object> objects, ClassLoader classLoader)  {
-		try {
-			UUID u = TimeBasedUUIDGenerator.instance().nextUUID();
-			Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance(req.args);
-			objects.put(u, result);
-			synchronized(out) {
-				out.writeObject(new CreateObjectResponse(req.requestId,u));
-				out.flush();
-			}
-		} catch (Exception e) {
-			e.printStackTrace(System.err);
+	void execute(CreateObjectRequest req, ObjectOutputStream out, Map<UUID, Object> objects, ClassLoader classLoader) throws Exception  {
+		UUID u = TimeBasedUUIDGenerator.instance().nextUUID();
+		Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance(req.args);
+		objects.put(u, result);
+		synchronized(out) {
+			out.writeObject(new CreateObjectResponse(req.requestId,u));
+			out.flush();
 		}
+	}
+
+
+	interface Invocation {
+		public void run() throws Exception;
+	}
+	
+	
+	Runnable withStackDumpOnException(Invocation i) {
+		return () -> {
+			try {
+				i.run();
+			} catch (Exception e) {
+				e.printStackTrace(System.err);
+			}
+		};
+	
 	}
 
 }
