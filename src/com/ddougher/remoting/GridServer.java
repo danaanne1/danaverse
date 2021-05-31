@@ -80,11 +80,10 @@ public class GridServer {
 			Object ob = in.readObject();
 			cachedThreadPool.submit(
 				()->
-					GridServer
-						.this
-						.getClass()
-						.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
-						.invoke(this, ob, out, objects, classLoader));
+					this
+					.getClass()
+					.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
+					.invoke(this, ob, out, objects, classLoader));
 		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
 		}
