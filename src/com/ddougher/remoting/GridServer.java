@@ -78,9 +78,13 @@ public class GridServer {
 	void readIncomingRequest(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects, ClassLoader classLoader) throws IOException  {
 		try {
 			Object ob = in.readObject();
-			getClass()
-				.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
-				.invoke(this, ob, out, objects, classLoader);
+			cachedThreadPool.submit(
+				()->
+					GridServer
+						.this
+						.getClass()
+						.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
+						.invoke(this, ob, out, objects, classLoader));
 		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
 		}
