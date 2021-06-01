@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 
 import com.ddougher.remoting.GridProtocol.CreateObjectRequest;
 import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
+import com.ddougher.remoting.GridProtocol.FindClassResponse;
 import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
 /**
@@ -66,7 +67,7 @@ public class GridServer {
 				ObjectOutputStream oout = new ObjectOutputStream(bout)   )
 		{
 			Map<UUID,Object> objects = new ConcurrentHashMap<>();
-			ClassLoader classLoader = null;
+			GridProxiedClassLoader classLoader = null;
 			while (true) {
 				readIncomingRequest(oin, oout, objects, classLoader);
 			}
@@ -75,21 +76,21 @@ public class GridServer {
 		}
 	}
 
-	void readIncomingRequest(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects, ClassLoader classLoader) throws IOException  {
+	void readIncomingRequest(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects, GridProxiedClassLoader classLoader) throws IOException  {
 		try {
 			Object ob = in.readObject();
 			cachedThreadPool.submit(
 				()->
 					this
 					.getClass()
-					.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, ClassLoader.class)
+					.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, GridProxiedClassLoader.class)
 					.invoke(this, ob, out, objects, classLoader));
 		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
 		}
 	}
 	
-	void execute(CreateObjectRequest req, ObjectOutputStream out, Map<UUID, Object> objects, ClassLoader classLoader) throws Exception  {
+	void execute(CreateObjectRequest req, ObjectOutputStream out, Map<UUID, Object> objects, GridProxiedClassLoader classLoader) throws Exception  {
 		UUID u = TimeBasedUUIDGenerator.instance().nextUUID();
 		Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance(req.args);
 		objects.put(u, result);
@@ -99,11 +100,13 @@ public class GridServer {
 		}
 	}
 
+	void execute(FindClassResponse resp, ObjectOutputStream out, Map<UUID,Object> objects, GridProxiedClassLoader classLoader) throws Exception {
+		classLoader.handleFindClassResponse(resp);
+	}
 
 	interface Invocation {
 		public void run() throws Exception;
 	}
-	
 	
 	Runnable withStackDumpOnException(Invocation i) {
 		return () -> {

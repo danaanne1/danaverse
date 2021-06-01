@@ -29,4 +29,24 @@ public class GridProtocol {
 		}
 	}
 
+	static class FindClassRequest implements Serializable {
+		private static final long serialVersionUID = 1L;
+		String className;
+		public FindClassRequest(String className) {
+			super();
+			this.className = className;
+		}
+	}
+
+	static class FindClassResponse implements Serializable {
+		private static final long serialVersionUID = 1L;
+		String className;
+		byte [] bytes;
+		public FindClassResponse(String className, byte[] bytes) {
+			super();
+			this.className = className;
+			this.bytes = bytes;
+		}
+	}
+	
 }
