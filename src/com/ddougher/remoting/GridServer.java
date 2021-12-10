@@ -67,7 +67,7 @@ public class GridServer {
 				ObjectOutputStream oout = new ObjectOutputStream(bout)   )
 		{
 			Map<UUID,Object> objects = new ConcurrentHashMap<>();
-			GridProxiedClassLoader classLoader = null;
+			GridProxiedClassLoader classLoader = new GridProxiedClassLoader(oout);
 			while (true) {
 				readIncomingRequest(oin, oout, objects, classLoader);
 			}
@@ -81,6 +81,7 @@ public class GridServer {
 			Object ob = in.readObject();
 			cachedThreadPool.submit(
 				()->
+					// find and execute the function matching the type of the input object
 					this
 					.getClass()
 					.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class, GridProxiedClassLoader.class)
@@ -92,7 +93,7 @@ public class GridServer {
 	
 	void execute(CreateObjectRequest req, ObjectOutputStream out, Map<UUID, Object> objects, GridProxiedClassLoader classLoader) throws Exception  {
 		UUID u = TimeBasedUUIDGenerator.instance().nextUUID();
-		Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance(req.args);
+		Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance((Object [])req.args);
 		objects.put(u, result);
 		synchronized(out) {
 			out.writeObject(new CreateObjectResponse(req.requestId,u));
@@ -105,7 +106,7 @@ public class GridServer {
 	}
 
 	interface Invocation {
-		public void run() throws Exception;
+		public void run() throws Exception; 
 	}
 	
 	Runnable withStackDumpOnException(Invocation i) {

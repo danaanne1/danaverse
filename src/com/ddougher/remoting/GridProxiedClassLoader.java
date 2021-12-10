@@ -19,8 +19,9 @@ public class GridProxiedClassLoader extends ClassLoader {
 	// see https://stackoverflow.com/questions/35071016/how-to-get-bytecode-as-byte-array-from-class 
 	// for details of how the other end can work
 	
-	public GridProxiedClassLoader() {
+	public GridProxiedClassLoader(ObjectOutputStream out) {
 		super();
+		this.out = out;
 		registerAsParallelCapable();
 	}
 	

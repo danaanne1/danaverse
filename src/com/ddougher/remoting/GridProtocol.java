@@ -5,13 +5,44 @@ import java.util.UUID;
 
 public class GridProtocol {
 
+	static class RemoteInvocationRequest implements Serializable {
+		private static final long serialVersionUID = 1L;
+		UUID requestId;
+		UUID objectId;
+		Class<? extends Serializable> [] parameters;
+		Serializable [] args;
+		public RemoteInvocationRequest(UUID requestId, UUID objectId, Class<? extends Serializable>[] parameters, Serializable[] args) {
+			super();
+			this.requestId = requestId;
+			this.objectId = objectId;
+			this.parameters = parameters;
+			this.args = args;
+		}
+		
+		
+	}
+	
+	static class RemoteInvocationResponse implements Serializable {
+		private static final long serialVersionUID = 1L;
+		UUID requestId;
+		UUID objectId;
+		Serializable result;
+		public RemoteInvocationResponse(UUID requestId, UUID objectId, Serializable result) {
+			super();
+			this.requestId = requestId;
+			this.objectId = objectId;
+			this.result = result;
+		}
+		
+	}
+
 	static class CreateObjectRequest implements Serializable {
 		private static final long serialVersionUID = 1L;
-		Object [] args;
-		Class<?> [] parameters;
+		Serializable [] args;
+		Class<? extends Serializable> [] parameters;
 		String className;
 		UUID requestId;
-		public CreateObjectRequest(UUID requestId, String className, Class<?> [] parameters, Object[] args) {
+		public CreateObjectRequest(UUID requestId, String className, Class<? extends Serializable> [] parameters, Serializable[] args) {
 			this.requestId = requestId;
 			this.className = className;
 			this.parameters = parameters;
