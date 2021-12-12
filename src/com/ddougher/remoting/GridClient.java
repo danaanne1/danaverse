@@ -8,9 +8,9 @@ import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
+import java.lang.instrument.UnmodifiableClassException;
 import java.net.SocketAddress;
 import java.nio.channels.Channels;
-import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -18,21 +18,17 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.ExecutionException;
 
-import com.ddougher.remoting.GridProtocol.CreateObjectRequest;
 import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
 import com.ddougher.remoting.GridProtocol.FindClassRequest;
 import com.ddougher.remoting.GridProtocol.FindClassResponse;
-import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
 
 /** A client for a grid server */
 public class GridClient implements Closeable {
 
-	private ExecutorService cachedThreadPool = Executors.newCachedThreadPool();
+	public static final HashMap<String, CompletableFuture<FindClassResponse>> classLoaderCache = new HashMap<String, CompletableFuture<FindClassResponse>>();
 
 	public GridClient(SocketAddress address) throws IOException {
 		SocketChannel serverChannel = SocketChannel.open();
@@ -63,9 +59,8 @@ public class GridClient implements Closeable {
 	void handleIncoming(ObjectInputStream in, ObjectOutputStream out, Map<UUID,Object> objects) throws IOException  {
 		try {
 			Object ob = in.readObject();
-			cachedThreadPool.submit(
-				()->
-					// find and execute the function matching the type of the input object
+			SharedResources.cachedThreadPool.submit(
+				()-> // find and execute the function matching the type of the input object
 					this
 					.getClass()
 					.getMethod("execute", ob.getClass(), ObjectOutputStream.class, Map.class)
@@ -75,29 +70,52 @@ public class GridClient implements Closeable {
 		}
 	}
 	
+	/** 
+	 * Received from the remote (server) in response to a CreateObjectRequest
+	 * @param res
+	 * @param out
+	 * @param objects
+	 * @throws Exception
+	 */
 	void execute(CreateObjectResponse res, ObjectOutputStream out, Map<UUID, Object> objects) throws Exception  {
 
 		
 	}
 
-	HashMap<String, CompletableFuture<FindClassResponse>> classLoaderCache = new HashMap<String, CompletableFuture<FindClassResponse>>();
-	
+	/**
+	 * Received from the remote (server) when it needs to load a class.
+	 * @param req
+	 * @param out
+	 * @param objects
+	 * @throws Exception
+	 */
 	void execute(FindClassRequest req, ObjectOutputStream out, Map<UUID, Object> objects) throws Exception {
 
-		// this is ugly. needs cleaning
-		CompletableFuture<FindClassResponse> result;
-		boolean shouldComplete = false;
+		CompletableFuture<FindClassResponse> futureResponse, mine = null;
 		synchronized (classLoaderCache) {
-			if (!classLoaderCache.containsKey(req.className)) {
-				classLoaderCache.put(req.className, result = new CompletableFuture<FindClassResponse>());
-				shouldComplete = true;
-			} else {
-				result = classLoaderCache.get(req.className);
-			}
+			if (!classLoaderCache.containsKey(req.className)) 
+				classLoaderCache.put(req.className, mine = futureResponse = new CompletableFuture<FindClassResponse>());
+			else
+				futureResponse = classLoaderCache.get(req.className);
 		}
-		if (shouldComplete) {
-			// read the class into an array of bytes:
-			InputStream in = ClassLoader.getSystemResourceAsStream(req.className.replace('.', '/'));
+
+		if (null!=mine) 
+			mine.complete(new FindClassResponse(req.className, readClassBytes(req.className)));
+
+		FindClassResponse response = futureResponse.get();
+
+		synchronized (out) {
+			out.writeObject(response);
+			out.flush();
+		}
+	}
+	
+	private byte [] readClassBytes(String className) throws IOException, ClassNotFoundException, UnmodifiableClassException, InterruptedException, ExecutionException {
+		try {
+			return ByteCodeExtractor.getClassBytes(Class.forName(className));
+		} catch (IllegalStateException ISE) {
+			// as a fallback, attempt to load from a classfile:
+			InputStream in = ClassLoader.getSystemResourceAsStream(className.replace('.', '/').concat(".class"));
 			LinkedList<byte []> bytes = new LinkedList<>();
 			byte [] buf = new byte[16536];
 			int c, d=0;
@@ -108,17 +126,13 @@ public class GridClient implements Closeable {
 				System.arraycopy(buf, 0, b, 0, c);
 			}
 			// copy the read bytes to a finished array
-			FindClassResponse resp = new FindClassResponse(req.className,b = new byte[d]);
+			b = new byte[d];
 			d = 0;
 			for (byte [] bb: bytes) {
 				System.arraycopy(bb, 0, b, d, bb.length);
 				d+=bb.length;
 			}
-			result.complete(resp);
-		}
-		FindClassResponse resp = result.get();
-		synchronized (out) {
-			out.writeObject(resp);
+			return b;
 		}
 	}
 	

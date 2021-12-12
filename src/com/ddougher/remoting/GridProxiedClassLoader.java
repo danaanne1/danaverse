@@ -25,6 +25,12 @@ public class GridProxiedClassLoader extends ClassLoader {
 		registerAsParallelCapable();
 	}
 	
+	public GridProxiedClassLoader(ClassLoader parent, ObjectOutputStream out) {
+		super(parent);
+		this.out = out;
+		registerAsParallelCapable();
+	}
+
 	@Override
 	protected Class<?> findClass(String name) throws ClassNotFoundException {
 		try {
