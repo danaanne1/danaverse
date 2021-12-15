@@ -18,8 +18,7 @@ public class Remote {
 	
 	// TODO fix this to use NIO!
 	
-	
-	public static <T extends Closeable> T client(Class<T> serviceApi, Class<? extends T> implClass, InputStream fromServer, OutputStream toServer ) {
+	public static <T extends Closeable> T client(Class<T> interfaceClass, Class<? extends T> implementationClass, InputStream fromServer, OutputStream toServer ) {
 
 		// typical round trips
 		// client invocation
@@ -29,7 +28,7 @@ public class Remote {
 		throw new NotImplementedException();
 	}
 
-	public static void serve(String interfaceClassName, String implClassName, InputStream fromClient, OutputStream toClient ) {
+	public static void server(String interfaceClassName, String implClassName, InputStream fromClient, OutputStream toClient ) {
 		
 		// create a classloader to proxy over the channel
 		// load implClass and serviceApi using the proxy classloader
