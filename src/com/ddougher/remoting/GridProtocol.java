@@ -9,10 +9,12 @@ public class GridProtocol {
 		private static final long serialVersionUID = 1L;
 		UUID requestId;
 		UUID objectId;
+		String methodName;
 		Class<? extends Serializable> [] parameters;
 		Serializable [] args;
-		public RemoteInvocationRequest(UUID requestId, UUID objectId, Class<? extends Serializable>[] parameters, Serializable[] args) {
+		public RemoteInvocationRequest(UUID requestId, UUID objectId, String methodName, Class<? extends Serializable>[] parameters, Serializable[] args) {
 			super();
+			this.methodName = methodName;
 			this.requestId = requestId;
 			this.objectId = objectId;
 			this.parameters = parameters;
