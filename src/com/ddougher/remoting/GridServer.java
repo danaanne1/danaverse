@@ -12,11 +12,9 @@ import java.net.SocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 import com.ddougher.remoting.GridProtocol.CreateObjectRequest;
 import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
@@ -44,6 +42,24 @@ public class GridServer {
 				e.printStackTrace(System.err);
 			}
 		};
+	}
+
+	public GridServer(SocketAddress address) throws IOException {
+		ServerSocketChannel serverChannel = ServerSocketChannel.open();
+		serverChannel.bind(address);
+		Thread t = new Thread(()->acceptNewIncoming(serverChannel));
+		t.setDaemon(true);
+		t.start();
+	}
+
+	void acceptNewIncoming(ServerSocketChannel channel) {
+		while (true) {
+			try {
+				new Context(channel.accept()).start();
+			} catch (IOException e) {
+				e.printStackTrace(System.err);
+			}
+		}
 	}
 
 	private class Context {
@@ -125,23 +141,5 @@ public class GridServer {
 		}
 	}
 	
-	public GridServer(SocketAddress address) throws IOException {
-		ServerSocketChannel serverChannel = ServerSocketChannel.open();
-		serverChannel.bind(address);
-		Thread t = new Thread(()->acceptNewIncoming(serverChannel));
-		t.setDaemon(true);
-		t.start();
-	}
-
-	void acceptNewIncoming(ServerSocketChannel channel) {
-		while (true) {
-			try {
-				new Context(channel.accept()).start();
-			} catch (IOException e) {
-				e.printStackTrace(System.err);
-			}
-		}
-	}
-
 
 }
