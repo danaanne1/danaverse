@@ -2,16 +2,18 @@ package com.ddougher.remoting;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.io.Serializable;
+import java.lang.reflect.Proxy;
 import java.net.SocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -28,13 +30,13 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  */
 public class GridServer {
 
-	private ExecutorService cachedThreadPool = SharedResources.cachedThreadPool;
+	static ExecutorService cachedThreadPool = SharedResources.cachedThreadPool;
 	
-	interface Invocation {
+	static interface Invocation {
 		public void run() throws Exception; 
 	}
 	
-	Runnable withStackDumpOnException(Invocation i) {
+	static Runnable withStackDumpOnException(Invocation i) {
 		return () -> {
 			try {
 				i.run();
@@ -55,14 +57,14 @@ public class GridServer {
 	void acceptNewIncoming(ServerSocketChannel channel) {
 		while (true) {
 			try {
-				new Context(channel.accept()).start();
+				new ServerContext(channel.accept()).start();
 			} catch (IOException e) {
 				e.printStackTrace(System.err);
 			}
 		}
 	}
 
-	private class Context {
+	private class ServerContext {
 		boolean done;
 		SocketChannel channel;
 		ObjectInputStream oin;
@@ -70,7 +72,7 @@ public class GridServer {
 		ConcurrentHashMap<UUID, Object> instances;
 		GridProxiedClassLoader classLoader;
 		
-		public Context(SocketChannel channel) {
+		public ServerContext(SocketChannel channel) {
 			super();
 			this.channel = channel;
 		}
@@ -78,12 +80,12 @@ public class GridServer {
 			new Thread(withStackDumpOnException(this::run)).start();
 		}
 		public void run() throws IOException {
-			try (	InputStream cin = Channels.newInputStream(channel);
-					BufferedInputStream bin = new BufferedInputStream(cin);
-					ObjectInputStream oin = new ObjectInputStream(bin);
-					OutputStream cout = Channels.newOutputStream(channel);
+			try (   OutputStream cout = Channels.newOutputStream(channel);
 					BufferedOutputStream bout = new BufferedOutputStream(cout);
-					ObjectOutputStream oout = new ObjectOutputStream(bout); )
+					ObjectOutputStream oout = new ObjectOutputStream(bout); 
+					InputStream cin = Channels.newInputStream(channel);
+					BufferedInputStream bin = new BufferedInputStream(cin);
+					ObjectInputStream oin = new ObjectInputStream(bin) )
 			{
 				this.done = false;
 				this.oin = oin;
@@ -99,8 +101,9 @@ public class GridServer {
 		}
 
 		void readAndDispatchIncoming() throws IOException  {
-			try {
-				Object ob = oin.readObject();
+			try 
+			{
+				Object ob = upConvert(oin.readObject());
 				cachedThreadPool.submit(
 					()->
 						// find and execute the function matching the type of the input object
@@ -113,11 +116,48 @@ public class GridServer {
 			}
 		}
 		
+		/*
+		 * upConverting allows us to piggyback the deserialization classloader on the same stream we are loading classes from.
+		 */
+		private Object upConvert(Object ob) throws IOException, ClassNotFoundException {
+			if (ob instanceof byte[]) {
+				try (ByteArrayInputStream bin = new ByteArrayInputStream((byte [])ob);
+						ObjectInputStream ooin = new ObjectInputStream(bin){
+							protected Class<?> resolveClass(java.io.ObjectStreamClass desc) throws IOException , ClassNotFoundException {
+								try {
+									return Class.forName(desc.getName(), true, classLoader);
+								} catch (Exception e) {
+									return super.resolveClass(desc);
+								}
+							}
+							protected Class<?> resolveProxyClass(String[] interfaces) throws IOException ,ClassNotFoundException {
+								try {
+									Class<?> [] interfaceClasses = (Class[]) Arrays.stream(interfaces).map(this::resolve).toArray();
+									return Proxy.getProxyClass(classLoader, interfaceClasses);
+								} catch (Exception e) {
+									return super.resolveProxyClass(interfaces);
+								}
+							};
+							private Class<?> resolve(String interfaceName) {
+								try {
+									return Class.forName(interfaceName, true, classLoader);
+								} catch (Exception re) {
+									if (re instanceof RuntimeException) throw (RuntimeException)re;
+									throw new RuntimeException(re);
+								}
+							}
+						}) 
+				{
+					ob = ooin.readObject();
+				}
+			}
+			return ob;
+		}
 		
 		@SuppressWarnings("unused")
 		void execute(CreateObjectRequest req) throws Exception  {
 			UUID u = TimeBasedUUIDGenerator.instance().nextUUID();
-			Object result = classLoader.loadClass(req.className).getConstructor(req.parameters).newInstance((Object [])req.args);
+			Object result = req.objectClass.getConstructor(req.parameters).newInstance((Object [])req.args);
 			instances.put(u, result);
 			synchronized(oout) {
 				oout.writeObject(new CreateObjectResponse(req.requestId,u));
@@ -133,9 +173,9 @@ public class GridServer {
 		@SuppressWarnings("unused")
 		void execute(RemoteInvocationRequest req) throws Exception {
 			Object target = instances.get(req.objectId);
-			Serializable result = (Serializable)target.getClass().getMethod(req.methodName, req.parameters).invoke(target, (Object [])req.args);
+			Object result = target.getClass().getMethod(req.methodName, req.parameterTypes).invoke(target, req.args);
 			synchronized(oout) {
-				oout.writeObject(new RemoteInvocationResponse(req.requestId, req.objectId, result));
+				oout.writeObject(new RemoteInvocationResponse(req.requestId, result));
 				oout.flush();
 			}
 		}

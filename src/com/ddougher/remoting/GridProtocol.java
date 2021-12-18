@@ -10,14 +10,14 @@ public class GridProtocol {
 		UUID requestId;
 		UUID objectId;
 		String methodName;
-		Class<? extends Serializable> [] parameters;
-		Serializable [] args;
-		public RemoteInvocationRequest(UUID requestId, UUID objectId, String methodName, Class<? extends Serializable>[] parameters, Serializable[] args) {
+		Class<?> [] parameterTypes;
+		Object [] args;
+		public RemoteInvocationRequest(UUID requestId, UUID objectId, String methodName, Class<?> [] parameterTypes, Object[] args) {
 			super();
 			this.methodName = methodName;
 			this.requestId = requestId;
 			this.objectId = objectId;
-			this.parameters = parameters;
+			this.parameterTypes = parameterTypes;
 			this.args = args;
 		}
 		
@@ -27,12 +27,10 @@ public class GridProtocol {
 	static class RemoteInvocationResponse implements Serializable {
 		private static final long serialVersionUID = 1L;
 		UUID requestId;
-		UUID objectId;
-		Serializable result;
-		public RemoteInvocationResponse(UUID requestId, UUID objectId, Serializable result) {
+		Object result;
+		public RemoteInvocationResponse(UUID requestId, Object result) {
 			super();
 			this.requestId = requestId;
-			this.objectId = objectId;
 			this.result = result;
 		}
 		
@@ -40,13 +38,13 @@ public class GridProtocol {
 
 	static class CreateObjectRequest implements Serializable {
 		private static final long serialVersionUID = 1L;
-		Serializable [] args;
-		Class<? extends Serializable> [] parameters;
-		String className;
+		Object [] args;
+		Class<?> [] parameters;
+		Class<?> objectClass;
 		UUID requestId;
-		public CreateObjectRequest(UUID requestId, String className, Class<? extends Serializable> [] parameters, Serializable[] args) {
+		public CreateObjectRequest(UUID requestId, Class<?> objectClass, Class<?> [] parameters, Object[] args) {
 			this.requestId = requestId;
-			this.className = className;
+			this.objectClass = objectClass;
 			this.parameters = parameters;
 			this.args = args;
 		}
