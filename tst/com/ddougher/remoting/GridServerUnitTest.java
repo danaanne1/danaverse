@@ -3,6 +3,7 @@ package com.ddougher.remoting;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
@@ -10,6 +11,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
 import org.junit.jupiter.api.*;
+
+import com.theunknowablebits.proxamic.DocumentStore;
+import com.theunknowablebits.proxamic.InMemoryDocumentStore;
+import com.theunknowablebits.proxamic.exampledata.AbilityScore;
+import com.theunknowablebits.proxamic.exampledata.CharacterRecord;
 
 class GridServerUnitTest {
 
@@ -38,12 +44,33 @@ class GridServerUnitTest {
 	}
 
 	@Test
-	void addSomeNumbers() throws IOException, InterruptedException, ExecutionException {
+	void testParallel() throws IOException, InterruptedException, ExecutionException {
 		TestService service = client.createRemoteObject(TestService.class, TestServiceImpl.class, new Class[0], new Object[0]);
-		
-		System.out.println(Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 ).stream().map(service::add).toArray());
+		Object[] result=Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 ).parallelStream().map(service::add).toArray();
+		for (Object o: result) {
+			if (o==(Object)105) return;
+		}
+		Assert.fail("Expected 105 to be present but got " + Arrays.toString(result));
 	}
 
+	@Test
+	void testRemoteDocumentStore() throws IOException, InterruptedException, ExecutionException {
+		DocumentStore docStore = client.createRemoteObject(DocumentStore.class, InMemoryDocumentStore.class, new Class[0], new Object[0]);
+		CharacterRecord record = docStore.newInstance(CharacterRecord.class);
+		record.setName("The Engineer");
+		record.setAge(BigDecimal.ZERO);
+		record.setLevel(100);
+		for (Object [] ob: new Object [][] { { "STR", 12 }, {"INT", 21 }, {"DEX", 19}, {"WIS", 16}, {"CON", 16}, {"CHR", 16} } ) {
+			AbilityScore score=docStore.newInstance(AbilityScore.class).withName((String)ob[0]).withValue((int)ob[1]);
+			record.abilityScoreList().add(score);
+			record.abilityScoreMap().put(score.name(), score);
+		}
+		Assert.assertEquals("The Engineer", record.name());
+		Assert.assertEquals(BigDecimal.ZERO, record.getAge());
+		Assert.assertEquals((Integer)100, record.getLevel());
+		Assert.assertEquals((Integer)21, record.abilityScoreMap().get("INT").value());
+	}
+	
 	public static class TestServiceImpl implements TestService {
 		
 		AtomicInteger accumulator = new AtomicInteger();
