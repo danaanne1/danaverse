@@ -10,6 +10,10 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.lang.instrument.UnmodifiableClassException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.lang.invoke.MethodHandles.Lookup;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.Socket;
@@ -197,7 +201,7 @@ public class GridClient implements Closeable {
 		UUID requestID = SharedResources.UUIDGenerator.nextUUID();
 		Object toWrite = downConvert(new CreateObjectRequest(requestID, implClass, params, args));
 		UUID objectID = awaitRequest(requestID, toWrite);
-		T t = (T)Proxy.newProxyInstance(ClassLoader.getSystemClassLoader(), new Class<?> [] { interfaceClass }, this::invoke);
+		T t = (T)Proxy.newProxyInstance(ClassLoader.getSystemClassLoader(), new Class<?> [] { interfaceClass }, (p,m,a)->invoke(p,m,a,interfaceClass));
 		IDByProxy.put(t, objectID);
 		return t;
 	}
@@ -209,7 +213,9 @@ public class GridClient implements Closeable {
 	/*
 	 * this section implements the remote invocation handler used by our remote object proxies
 	 */
-	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+	public Object invoke(Object proxy, Method method, Object[] args, Class<?> interfaceClass) throws Throwable {
+		if (method.isDefault())
+			return handleDefaultMethod(proxy, method, args, interfaceClass);
 		if (method.getName()=="hashCode") 
 			return System.identityHashCode(proxy);
 		if (method.getName()=="equals") 
@@ -218,6 +224,24 @@ public class GridClient implements Closeable {
 		UUID objectID = IDByProxy.get(proxy);
 		Object toWrite = downConvert(new RemoteInvocationRequest(reqID, objectID, method.getName(), method.getParameterTypes(), args));
 		return awaitRequest(reqID, toWrite);
+	}
+	private static final Object handleDefaultMethod(Object proxy, Method method, Object [] args, Class<?> interfaceClass) throws Throwable {
+		// this can get very ugly between Java8 and Java 9+
+		// for more detail see this
+		// https://blog.jooq.org/2018/03/28/correct-reflective-access-to-interface-default-methods-in-java-8-9-10/
+		Lookup lookup;
+		try {
+			Constructor<Lookup> constructor = Lookup.class.getDeclaredConstructor(Class.class);
+			constructor.setAccessible(true);
+			lookup = constructor.newInstance(interfaceClass);
+		} catch (Exception e) {
+			lookup = MethodHandles.lookup();
+		}
+		return 
+			lookup
+				.findSpecial(interfaceClass, method.getName(), MethodType.methodType(method.getReturnType(), method.getParameterTypes()), interfaceClass)
+				.bindTo(proxy)
+				.invokeWithArguments(args);
 	}
 	public void execute(RemoteInvocationResponse res) throws Exception {
 		awaitedRequests.get(res.requestId).complete(res.result);
