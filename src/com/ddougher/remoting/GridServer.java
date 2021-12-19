@@ -85,7 +85,7 @@ public class GridServer {
 						BufferedOutputStream bout = new BufferedOutputStream(cout);
 						ObjectOutputStream oout = new ObjectOutputStream(bout); )
 				{
-					oout.flush();
+					oout.flush(); // force out the stream headers
 					this.done = false;
 					this.oin = oin;
 					this.oout = oout;

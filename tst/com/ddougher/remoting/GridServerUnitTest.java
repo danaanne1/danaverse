@@ -1,7 +1,5 @@
 package com.ddougher.remoting;
 
-import static org.junit.jupiter.api.Assertions.*;
-
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
@@ -10,10 +8,12 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Assert;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.InMemoryDocumentStore;
+import com.theunknowablebits.proxamic.MemoryDocumentStore;
 import com.theunknowablebits.proxamic.exampledata.AbilityScore;
 import com.theunknowablebits.proxamic.exampledata.CharacterRecord;
 
@@ -55,16 +55,18 @@ class GridServerUnitTest {
 
 	@Test
 	void testRemoteDocumentStore() throws IOException, InterruptedException, ExecutionException {
-		DocumentStore docStore = client.createRemoteObject(DocumentStore.class, InMemoryDocumentStore.class, new Class[0], new Object[0]);
-		CharacterRecord record = docStore.newInstance(CharacterRecord.class);
+		DocumentStore store = client.createRemoteObject(DocumentStore.class, MemoryDocumentStore.class, new Class[0], new Object[0]);
+		CharacterRecord record = store.get(CharacterRecord.class, "Dana");
 		record.setName("The Engineer");
 		record.setAge(BigDecimal.ZERO);
 		record.setLevel(100);
 		for (Object [] ob: new Object [][] { { "STR", 12 }, {"INT", 21 }, {"DEX", 19}, {"WIS", 16}, {"CON", 16}, {"CHR", 16} } ) {
-			AbilityScore score=docStore.newInstance(AbilityScore.class).withName((String)ob[0]).withValue((int)ob[1]);
+			AbilityScore score=store.newInstance(AbilityScore.class).withName((String)ob[0]).withValue((int)ob[1]);
 			record.abilityScoreList().add(score);
 			record.abilityScoreMap().put(score.name(), score);
 		}
+		store.put(record); 
+		record = store.get(CharacterRecord.class, "Dana");
 		Assert.assertEquals("The Engineer", record.name());
 		Assert.assertEquals(BigDecimal.ZERO, record.getAge());
 		Assert.assertEquals((Integer)100, record.getLevel());

@@ -1,6 +1,7 @@
 package com.ddougher.remoting;
 
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.UUID;
 
 public class GridProtocol {
@@ -24,12 +25,12 @@ public class GridProtocol {
 		public String toString() {
 			return String.format
 				(
-						"RemoteInvocationRequest(requestID=%s,objectId=%s,methodName=%s,parameterTypes=%s,args=%s)", 
+						" RemoteInvocationRequest ( requestId=%s, objectId=%s, methodName=%s, parameterTypes=%s, args=%s )", 
 						requestId,
 						objectId,
 						methodName,
-						parameterTypes,
-						args
+						Arrays.toString(parameterTypes),
+						Arrays.toString(args)
 				);
 		}
 		
@@ -43,6 +44,15 @@ public class GridProtocol {
 			super();
 			this.requestId = requestId;
 			this.result = result;
+		}
+		@Override
+		public String toString() {
+			return String.format
+				(
+						" RemoteInvocationResponse ( requestId=%s, result=%s )", 
+						requestId,
+						result
+				);
 		}
 		
 	}
@@ -59,6 +69,17 @@ public class GridProtocol {
 			this.parameters = parameters;
 			this.args = args;
 		}
+		@Override
+		public String toString() {
+			return String.format
+				(
+						" CreateObjectRequest ( requestId=%s, objectClass=%s, parameters=%s, args=%s )", 
+						requestId,
+						objectClass,
+						Arrays.toString(parameters),
+						Arrays.toString(args)
+				);
+		}
 	}
 	
 	static class CreateObjectResponse implements Serializable {
@@ -68,6 +89,15 @@ public class GridProtocol {
 		public CreateObjectResponse(UUID requestId, UUID objectId) {
 			this.requestId = requestId;
 			this.objectId = objectId;
+		}
+		@Override
+		public String toString() {
+			return String.format
+				(
+						" CreateObjectResponse ( requestId=%s, objectId=%s )", 
+						requestId,
+						objectId
+				);
 		}
 	}
 

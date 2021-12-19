@@ -64,15 +64,15 @@ public class GridClient implements Closeable {
 	}
 
 	void run() throws IOException {
-		try (	Socket channel = new Socket() )
+		try (Socket socket = new Socket() )
 		{
-			channel.connect(address);
-			try (	OutputStream cout = channel.getOutputStream();
+			socket.connect(address);
+			try (	OutputStream cout = socket.getOutputStream();
 					BufferedOutputStream bout = new BufferedOutputStream(cout);
 					ObjectOutputStream oout = new ObjectOutputStream(bout); ) 
 			{
-				oout.flush();
-				try (	InputStream cin = channel.getInputStream();
+				oout.flush(); // force out the stream headers
+				try (	InputStream cin = socket.getInputStream();
 						BufferedInputStream bin = new BufferedInputStream(cin);
 						ObjectInputStream oin = new ObjectInputStream(bin); )
 				{
