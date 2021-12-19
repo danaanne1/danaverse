@@ -9,14 +9,12 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Proxy;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.SocketAddress;
-import java.nio.channels.Channels;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
 
 import com.ddougher.remoting.GridProtocol.CreateObjectRequest;
 import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
@@ -30,34 +28,33 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  */
 public class GridServer {
 
-	static ExecutorService cachedThreadPool = SharedResources.cachedThreadPool;
+	private volatile boolean shutdown = false;
+	private transient ServerSocket serverSocket;
+	private boolean debug = true;
 	
-	static interface Invocation {
-		public void run() throws Exception; 
-	}
-	
-	static Runnable withStackDumpOnException(Invocation i) {
-		return () -> {
-			try {
-				i.run();
-			} catch (Exception e) {
-				e.printStackTrace(System.err);
-			}
-		};
+	public GridServer(SocketAddress address) throws IOException {
+		this.serverSocket = new ServerSocket();
+		serverSocket.bind(address);
 	}
 
-	public GridServer(SocketAddress address) throws IOException {
-		ServerSocketChannel serverChannel = ServerSocketChannel.open();
-		serverChannel.bind(address);
-		Thread t = new Thread(()->acceptNewIncoming(serverChannel));
+	public void start() {
+		Thread t = new Thread(()->acceptNewIncoming());
 		t.setDaemon(true);
 		t.start();
 	}
+	
+	public SocketAddress getBoundAddress() throws IOException {
+		return serverSocket.getLocalSocketAddress();
+	}
+	
+	public void shutdown() {
+		shutdown = true;
+	}
 
-	void acceptNewIncoming(ServerSocketChannel channel) {
-		while (true) {
+	void acceptNewIncoming() {
+		while (!shutdown) {
 			try {
-				new ServerContext(channel.accept()).start();
+				new ServerContext(serverSocket.accept()).start();
 			} catch (IOException e) {
 				e.printStackTrace(System.err);
 			}
@@ -66,51 +63,57 @@ public class GridServer {
 
 	private class ServerContext {
 		boolean done;
-		SocketChannel channel;
+		Socket socket;
 		ObjectInputStream oin;
 		ObjectOutputStream oout;
 		ConcurrentHashMap<UUID, Object> instances;
 		GridProxiedClassLoader classLoader;
 		
-		public ServerContext(SocketChannel channel) {
+		public ServerContext(Socket socket) {
 			super();
-			this.channel = channel;
+			this.socket = socket;
 		}
 		public void start() {
-			new Thread(withStackDumpOnException(this::run)).start();
+			new Thread(SharedResources.withStackDumpOnException(this::run)).start();
 		}
 		public void run() throws IOException {
-			try (   OutputStream cout = Channels.newOutputStream(channel);
-					BufferedOutputStream bout = new BufferedOutputStream(cout);
-					ObjectOutputStream oout = new ObjectOutputStream(bout); 
-					InputStream cin = Channels.newInputStream(channel);
+			try (  	InputStream cin = socket.getInputStream();
 					BufferedInputStream bin = new BufferedInputStream(cin);
-					ObjectInputStream oin = new ObjectInputStream(bin) )
+					ObjectInputStream oin = new ObjectInputStream(bin); )
 			{
-				this.done = false;
-				this.oin = oin;
-				this.oout = oout;
-				this.instances = new ConcurrentHashMap<>();
-				this.classLoader = new GridProxiedClassLoader(oout);
-				while (!done) 
-					readAndDispatchIncoming();
+				try (	OutputStream cout = socket.getOutputStream();
+						BufferedOutputStream bout = new BufferedOutputStream(cout);
+						ObjectOutputStream oout = new ObjectOutputStream(bout); )
+				{
+					oout.flush();
+					this.done = false;
+					this.oin = oin;
+					this.oout = oout;
+					this.instances = new ConcurrentHashMap<>();
+					this.classLoader = new GridProxiedClassLoader(oout);
+					while (!done && !shutdown) 
+						readAndDispatchIncoming();
+				} 
 			} finally {
-				channel.close();
+				socket.close();
 			}
-
 		}
 
 		void readAndDispatchIncoming() throws IOException  {
 			try 
 			{
-				Object ob = upConvert(oin.readObject());
-				cachedThreadPool.submit(
-					()->
+				Object ob = oin.readObject();
+				SharedResources.cachedThreadPool.execute(
+					SharedResources.withStackDumpOnException(()-> {
 						// find and execute the function matching the type of the input object
+						Object o = upConvert(ob);
+						if (debug) System.out.println(this.toString() + ":" + o);
 						this
-						.getClass()
-						.getMethod("execute", ob.getClass())
-						.invoke(this, ob));
+							.getClass()
+							.getDeclaredMethod("execute", o.getClass())
+							.invoke(this, o);
+					}
+				));
 			} catch (ReflectiveOperationException  e) {
 				e.printStackTrace(System.err);
 			}

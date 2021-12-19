@@ -20,7 +20,18 @@ public class GridProtocol {
 			this.parameterTypes = parameterTypes;
 			this.args = args;
 		}
-		
+		@Override
+		public String toString() {
+			return String.format
+				(
+						"RemoteInvocationRequest(requestID=%s,objectId=%s,methodName=%s,parameterTypes=%s,args=%s)", 
+						requestId,
+						objectId,
+						methodName,
+						parameterTypes,
+						args
+				);
+		}
 		
 	}
 	

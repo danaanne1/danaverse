@@ -38,12 +38,13 @@ public class GridProxiedClassLoader extends ClassLoader {
 			if (null==(c2=pendingMap.putIfAbsent(name, c1 = new CompletableFuture<byte[]>()))) {
 				synchronized(out) {
 					out.writeObject(new FindClassRequest(name));
+					out.flush();
 				}
 				c2=c1;
 			} 
-			byte [] b = c2.get(30, TimeUnit.SECONDS);
+			byte [] b = c2.get();
 			return defineClass(name, b, 0, b.length);
-		} catch (IOException | InterruptedException | ExecutionException | TimeoutException e) {
+		} catch (IOException | InterruptedException | ExecutionException  e) {
 			throw new ClassNotFoundException("Unable to load class because",e);
 		}
 	}

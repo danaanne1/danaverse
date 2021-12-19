@@ -12,6 +12,7 @@ import java.io.OutputStream;
 import java.lang.instrument.UnmodifiableClassException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.net.Socket;
 import java.net.SocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.SocketChannel;
@@ -40,43 +41,46 @@ public class GridClient implements Closeable {
 	SocketAddress address;
 	transient ObjectInputStream oin;
 	transient ObjectOutputStream oout;
-
-	static interface Invocation {
-		public void run() throws Exception; 
-	}
-	
-	static Runnable withStackDumpOnException(Invocation i) {
-		return () -> {
-			try {
-				i.run();
-			} catch (Exception e) {
-				e.printStackTrace(System.err);
-			}
-		};
-	}
+	transient boolean closed = false;
+	transient Thread thread;
+	transient boolean debug = true;
 	
 	public GridClient(SocketAddress address) {
 		this.address = address;
 	}
 
 	void start() {
-		new Thread(withStackDumpOnException(this::run)).start();
+		synchronized (this) {
+			(thread = new Thread(SharedResources.withStackDumpOnException(this::run))).start();
+			try {
+				this.wait(); // wait for thread to achieve full startup
+			} catch (InterruptedException e) {
+			}
+		}
 	}
 
 	void run() throws IOException {
-		try (
-				SocketChannel channel = SocketChannel.open(address);
-				OutputStream cout = Channels.newOutputStream(channel);
-				BufferedOutputStream bout = new BufferedOutputStream(cout);
-				ObjectOutputStream oout = new ObjectOutputStream(bout);
-				InputStream cin = Channels.newInputStream(channel);
-				BufferedInputStream bin = new BufferedInputStream(cin);
-				ObjectInputStream oin = new ObjectInputStream(bin) )
+		try (	Socket channel = new Socket() )
 		{
-			this.oin = oin;
-			this.oout = oout;
-			while(true) {
-				handleIncoming();
+			channel.connect(address);
+			try (	OutputStream cout = channel.getOutputStream();
+					BufferedOutputStream bout = new BufferedOutputStream(cout);
+					ObjectOutputStream oout = new ObjectOutputStream(bout); ) 
+			{
+				oout.flush();
+				try (	InputStream cin = channel.getInputStream();
+						BufferedInputStream bin = new BufferedInputStream(cin);
+						ObjectInputStream oin = new ObjectInputStream(bin); )
+				{
+					this.oin = oin;
+					this.oout = oout;
+					synchronized (this) {
+						this.notify();
+					}
+					while(!closed) {
+						handleIncoming();
+					}
+				}
 			}
 		}
 	}
@@ -84,12 +88,15 @@ public class GridClient implements Closeable {
 	void handleIncoming() throws IOException  {
 		try {
 			Object ob = oin.readObject();
-			SharedResources.cachedThreadPool.submit(
-				()-> // find and execute the function matching the type of the input object
+			SharedResources.cachedThreadPool.execute(
+				SharedResources.withStackDumpOnException(() -> {
+					if (debug) System.out.println(this.toString() + ":" +ob);
+					// find and execute the function matching the type of the input object
 					this
-					.getClass()
-					.getMethod("execute", ob.getClass())
-					.invoke(this, ob));
+						.getClass()
+						.getMethod("execute", ob.getClass())
+						.invoke(this, ob);
+				}));
 		} catch (ReflectiveOperationException  e) {
 			e.printStackTrace(System.err);
 		}
@@ -125,8 +132,8 @@ public class GridClient implements Closeable {
 
 	@Override
 	public void close() throws IOException {
-		// TODO Auto-generated method stub
-		
+		closed = true;
+		thread.interrupt();
 	}
 
 	/**
@@ -143,7 +150,7 @@ public class GridClient implements Closeable {
 	 * @param objects
 	 * @throws Exception
 	 */
-	void execute(FindClassRequest req) throws Exception {
+	public void execute(FindClassRequest req) throws Exception {
 
 		CompletableFuture<FindClassResponse> futureResponse, mine = null;
 		synchronized (classLoaderCache) {
@@ -186,7 +193,7 @@ public class GridClient implements Closeable {
 	 */
 	transient Map<Object,UUID> IDByProxy = Collections.synchronizedMap(new WeakHashMap<>());
 	@SuppressWarnings("unchecked")
-	<T> T createObject(Class<T> interfaceClass, Class<?> implClass, Class<?> [] params, Object [] args) throws IOException, InterruptedException, ExecutionException {
+	public <T> T createRemoteObject(Class<T> interfaceClass, Class<?> implClass, Class<?> [] params, Object [] args) throws IOException, InterruptedException, ExecutionException {
 		UUID requestID = SharedResources.UUIDGenerator.nextUUID();
 		Object toWrite = downConvert(new CreateObjectRequest(requestID, implClass, params, args));
 		UUID objectID = awaitRequest(requestID, toWrite);
@@ -194,7 +201,7 @@ public class GridClient implements Closeable {
 		IDByProxy.put(t, objectID);
 		return t;
 	}
-	void execute(CreateObjectResponse res) throws Exception  {
+	public void execute(CreateObjectResponse res) throws Exception  {
 		awaitedRequests.get(res.requestId).complete(res.objectId);
 	}
 
@@ -203,12 +210,16 @@ public class GridClient implements Closeable {
 	 * this section implements the remote invocation handler used by our remote object proxies
 	 */
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+		if (method.getName()=="hashCode") 
+			return System.identityHashCode(proxy);
+		if (method.getName()=="equals") 
+			return proxy==args[0];
 		UUID reqID = SharedResources.UUIDGenerator.nextUUID();
 		UUID objectID = IDByProxy.get(proxy);
 		Object toWrite = downConvert(new RemoteInvocationRequest(reqID, objectID, method.getName(), method.getParameterTypes(), args));
 		return awaitRequest(reqID, toWrite);
 	}
-	void execute(RemoteInvocationResponse res) throws Exception {
+	public void execute(RemoteInvocationResponse res) throws Exception {
 		awaitedRequests.get(res.requestId).complete(res.result);
 	}
 
@@ -217,12 +228,13 @@ public class GridClient implements Closeable {
 	 * This is neccessary so that the remote can piggyback classloader requests on the same stream that the object is read from.
 	 */
 	private byte [] downConvert(Object ob) throws IOException {
-		try(ByteArrayOutputStream bout = new ByteArrayOutputStream();
-				ObjectOutputStream obout = new ObjectOutputStream(bout)) {
-			obout.writeObject(ob);
-			obout.flush();
-			return bout.toByteArray();
-		}
+		ByteArrayOutputStream bout = new ByteArrayOutputStream();
+		ObjectOutputStream obout = new ObjectOutputStream(bout);
+		obout.writeObject(ob);
+		obout.flush();
+		obout.close();
+		bout.close();
+		return bout.toByteArray();
 	}
 
 }
