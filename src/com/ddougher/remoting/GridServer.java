@@ -90,7 +90,7 @@ public class GridServer {
 					this.oin = oin;
 					this.oout = oout;
 					this.instances = new ConcurrentHashMap<>();
-					this.classLoader = new GridProxiedClassLoader(oout);
+					this.classLoader = new GridProxiedClassLoader(getClass().getClassLoader(),oout);
 					while (!done && !shutdown) 
 						readAndDispatchIncoming();
 				} 
