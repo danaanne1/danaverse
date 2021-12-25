@@ -16,6 +16,7 @@ import com.theunknowablebits.proxamic.DocumentStore;
 import com.theunknowablebits.proxamic.MemoryDocumentStore;
 import com.theunknowablebits.proxamic.exampledata.AbilityScore;
 import com.theunknowablebits.proxamic.exampledata.CharacterRecord;
+import com.theunknowablebits.proxamic.exampledata.PlayerRecord;
 
 class GridServerUnitTest {
 
@@ -57,6 +58,7 @@ class GridServerUnitTest {
 	void testRemoteDocumentStore() throws IOException, InterruptedException, ExecutionException {
 		DocumentStore store = client.createRemoteObject(DocumentStore.class, MemoryDocumentStore.class, new Class[0], new Object[0]);
 		CharacterRecord record = store.get(CharacterRecord.class, "Dana");
+		record.setDocumentStore(store);
 		record.setName("The Engineer");
 		record.setAge(BigDecimal.ZERO);
 		record.setLevel(100);
@@ -66,7 +68,16 @@ class GridServerUnitTest {
 			record.abilityScoreMap().put(score.name(), score);
 		}
 		store.put(record); 
-		record = store.get(CharacterRecord.class, "Dana");
+		
+		PlayerRecord player= store.get(PlayerRecord.class, "Player");
+		player.setDocumentStore(store);
+		player.characters().add(record);
+		store.put(player);
+		
+		player=store.get(PlayerRecord.class, "Player");
+		player.setDocumentStore(store);
+		
+		record = player.characters().get(0);
 		Assert.assertEquals("The Engineer", record.name());
 		Assert.assertEquals(BigDecimal.ZERO, record.getAge());
 		Assert.assertEquals((Integer)100, record.getLevel());
