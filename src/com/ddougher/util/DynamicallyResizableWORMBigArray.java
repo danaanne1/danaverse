@@ -4,6 +4,10 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
 /**
  * A Dynamically Resizeable 'Write Once Read Many' Unlimited Size Array
@@ -13,49 +17,68 @@ import java.util.UUID;
  *  <li>Handles randomly sized blocks of bytes organized sequentially and accessable as a large array</li>
  * 	<li>Can handle mid insertion at a max cost of O*Log(n), where n is the block count</li>
  *  <li>Can handle O(n) linear iteration in either direction</li>
- *  <li>Can handle concurrent modification and log structured transactions with the support of an external coordinator</li>
+ *  <li>Can handle concurrent modification</li>
  *  <li>Can front a memory, memory mapped, disk, or cloud based storage subsystem</li>
  *  <li>Has an overhead cost of 100*2^(Log2(blockcount)+1))</li>
  *  <li>Is capable of transparent defragmentation</li>
  *  <li>Is capable of transparent consolidation to a desired block size</li>
  *  <li>Can self maintain to the optimal overhead size</li>
+ *  </li>Can provide point in time traversals</li>
  * </ul>
  * <p>
  * Based on these tenets, a system could memory map a 2 tb array using 500mb blocks with 1mb of overhead.
  * @author Dana
  *
  */
+/*
+ * This works by maintaining a constant, cross linked tree structure with all nodes represented. 
+ * 
+ * Operations are structured as moves, swaps, splits, consolidations, and other mutations of the 
+ * Addressable and size values of nodes, but the structure of the tree remains constant.
+ * 
+ * Transaction identifiers are represented by monoatomically increasing TimeStamp UUIDs, with the oldest (lowest)
+ * number always taking precedence in the case of conflicts. (a committment ordering strategy) 
+ * 
+ * The Addressable provider is encouraged but not required to store object history... doing so is the basis
+ * of the time travel feature. This also enables the transactional behavior, as the system can watermark 
+ * for outstanding transactions.
+ * 
+ */
 public class DynamicallyResizableWORMBigArray {
 
-	public interface Addressable {
-		ByteBuffer get(long offset, long length);
-		Addressable slice(long offset, long length);
-		long size();
-	}
-
-	public interface AddressableFactory {
-		Addressable createAddressable(ByteBuffer data, long length);
-		Addressable consolidate(Addressable a, Addressable b);
-		public void deleteAddressable(Addressable a);
+	public interface Sizeable {
+		void set(BigInteger size, UUID mark);
+		BigInteger get(UUID mark);
+		Sizeable clone();
 	}
 	
-	/*
-	 * Unlimited cosmic power cost approximately 100 bytes per node.
-	 */
+	public interface Addressable {
+		void set(ByteBuffer data, UUID mark);
+		void append(Addressable a, UUID mark);
+		long size(UUID mark);
+		ByteBuffer get(UUID effectiveDate);
+	}
+	
+	public interface AssetFactory {
+		Addressable createAddressable();
+		Sizeable createSizeable();
+	}
+	
+	AssetFactory assetFactory;
+	UUID highWatermark;
+
 	class Node {
 		Addressable object;
-		BigInteger size;
+		Sizeable size;
 		Node parent;
 		Node left;
 		Node right;
 		Node previous;
 		Node next;
-		UUID lockOwner;
-		Long lockReleaseTime;
 		public Node
 		(
 				Addressable object, 
-				BigInteger size, 
+				Sizeable size, 
 				Node parent,
 				Node left, 
 				Node right,
@@ -70,104 +93,50 @@ public class DynamicallyResizableWORMBigArray {
 			this.right = right;
 			this.previous = previous;
 			this.next = next;
-			this.lockOwner = null;
-			this.lockReleaseTime = Long.MIN_VALUE;
 		}
 
-		/** 
-		 * Consolidates the right addressable into the left addressable. Returns true if the result is over targetSize.
-		 *  
-		 * @param targetSize
-		 */
-		public boolean consolidate(long targetSize) {
-			if (left == null) {
-				// just flip left and right:
-				left = right;
-				right = null;
-				
-			} else if (right != null) {
-				
-				if (!right.size.equals(BigInteger.ZERO)) {
-					if (left.size.equals(BigInteger.ZERO)) {
-						// short cut:
-						left.object = right.object;
-						left.size = right.size;
-						right.object = addressableFactory.createAddressable(ByteBuffer.allocate(0), 0);
-						right.size = BigInteger.ZERO;
-					} else {
-						// long way:
-						Addressable oldRight = right.object;
-						Addressable oldLeft = left.object;
-						left.object = addressableFactory.consolidate(oldLeft, oldRight);
-						left.size = BigInteger.valueOf(left.object.size());
-						right.object = addressableFactory.createAddressable(ByteBuffer.allocate(0), 0);
-						right.size = BigInteger.ZERO;
-						addressableFactory.deleteAddressable(oldLeft);
-						addressableFactory.deleteAddressable(oldRight);
-					}
-				}
-			}
-
-			if (left != null)
-				return left.size.compareTo(BigInteger.valueOf(targetSize)) > 0;
-
-			return false;
-		}
-		
-		/**
-		 * Adds the 0 length entries as a precursor to push
-		 */
-		public void fill() {
-			if ((left == null)&&(right==null))
-				throw new IllegalStateException("Both edges can not be null");
-			if (left == null) {
-				left = 	
-						new Node
-						(
-							addressableFactory.createAddressable(ByteBuffer.allocate(0), 0), 
-							BigInteger.ZERO, 
-							right.parent, 
-							null, 
-							null, 
-							right.previous, 
-							right
-						);
-				right.previous = left;
-			} 
-			if (right == null) {
-				right = 
-						new Node
-						(
-								addressableFactory.createAddressable(ByteBuffer.allocate(0), 0), 
-								BigInteger.ZERO, 
-								right.parent, 
-								null, 
-								null, 
-								left, 
-								left.next
-						);
-				left.next = right;
-			}
-		}
-		
+		/** Adds a new layer */
 		public void push() {
-			
+			if (object == null) 
+				throw new IllegalStateException("Push can only be called on leafs");
+			Node newParent = new Node(null, size.clone(), parent, this, null, null, null );
+			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), newParent, null, null, this, next );
+			transactionally((tid)->{
+				if (parent.left == this) {
+					parent.left = newParent;
+				} else {
+					parent.right = newParent;
+				}
+				parent = newParent;
+				parent.right = newSibling;
+				next = newSibling;
+			});
 		}
 		
-		public Node bubbleLeft(Node incoming) {
-			// insert incoming into chain, fix parent links, and return the orphaned left link of the parent
-			return null;
+		/** Defragment's by appending and zeroing the next (if it would be under sizeLimit) */
+		public void defragment(long sizeLimit) {
+			if (object == null) 
+				throw new IllegalStateException("Defrag can only be called on leafs");
+			if (next == null)
+				throw new IllegalStateException("Defrag should not be called on right nodes");
+			transactionally((tid)->{
+				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
+					object.append(next.object, tid);
+					next.object.set(ByteBuffer.allocate(0), tid);
+				}
+			});
 		}
-
-		public Node bubbleRight(Node incoming) {
-			// insert incoming into chain, fix parent links, and return the orphaned right link of the parent
-			return null;
-		}
+		
 	}
 
 	Node root;
-	AddressableFactory addressableFactory;
-
+	
+	public synchronized void transactionally(Consumer<UUID> transaction) {
+		UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
+		transaction.accept(transactionId);
+		highWatermark = transactionId;
+	}
+	
 	public void insert(ByteBuffer data, BigInteger offset, long length) {
 		
 	}
