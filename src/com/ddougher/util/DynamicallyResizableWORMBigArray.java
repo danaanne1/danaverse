@@ -4,8 +4,8 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.UUID;
+import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
@@ -65,7 +65,6 @@ public class DynamicallyResizableWORMBigArray {
 	}
 	
 	AssetFactory assetFactory;
-	UUID highWatermark;
 
 	class Node {
 		Addressable object;
@@ -110,6 +109,7 @@ public class DynamicallyResizableWORMBigArray {
 				parent = newParent;
 				parent.right = newSibling;
 				next = newSibling;
+				freeSpace.add(BigInteger.ONE);
 			});
 		}
 		
@@ -123,18 +123,46 @@ public class DynamicallyResizableWORMBigArray {
 				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
 					object.append(next.object, tid);
 					next.object.set(ByteBuffer.allocate(0), tid);
+					freeSpace.add(BigInteger.ONE);
 				}
 			});
 		}
 		
 	}
 
-	Node root;
+	Node root; // The root never changes
+	Node head; // The head never changes
 	
-	public synchronized void transactionally(Consumer<UUID> transaction) {
-		UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
-		transaction.accept(transactionId);
-		highWatermark = transactionId;
+	// a lock and the set of variables guarded by it
+	private static final Object transactionLock = new Object();
+	UUID highWatermark;
+	BigInteger freeSpace;
+	BigInteger depth;
+	long sizeLimit;
+
+	private void transactionally(Consumer<UUID> transaction) {
+		synchronized(transactionLock) {
+			UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
+			transaction.accept(transactionId);
+			highWatermark = transactionId;
+		}
+	}
+	
+	// there can only be one push active at a time
+	private static final Object pushLock = new Object();
+	private void push() {
+		synchronized(pushLock) {
+			for (Node active = head; active!=null; active = active.next.next) 
+				active.push();
+			transactionally((tid)->{
+				depth.add(BigInteger.ONE);
+			});
+		}
+	}
+	
+	private void defragment() {
+		for (Node active = head; active != null; active = active.next.next) 
+			active.defragment(sizeLimit);
 	}
 	
 	public void insert(ByteBuffer data, BigInteger offset, long length) {
