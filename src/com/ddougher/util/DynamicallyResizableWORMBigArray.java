@@ -3,8 +3,10 @@ package com.ddougher.util;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
+import java.util.Spliterator;
 import java.util.UUID;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
@@ -56,7 +58,13 @@ public class DynamicallyResizableWORMBigArray {
 		void set(ByteBuffer data, UUID mark);
 		void append(Addressable a, UUID mark);
 		long size(UUID mark);
-		ByteBuffer get(UUID effectiveDate);
+		ByteBuffer get(UUID mark);
+		/** changes the effective size of this addressable. Essentially the same as set(get(mark).duplicate().position(length).flip(),mark) */
+		default void resize(int length, UUID mark) {
+			set((ByteBuffer)get(mark).duplicate().position(length).flip(),mark);
+		}
+		/** Returns a new Addressable with a blank history that represents a subset of this addressable */
+		Addressable slice(int offset, UUID mark);
 	}
 	
 	public interface AssetFactory {
@@ -65,6 +73,16 @@ public class DynamicallyResizableWORMBigArray {
 	}
 	
 	AssetFactory assetFactory;
+	
+	class Location {
+		Node node;
+		BigInteger offset;
+		public Location(Node node, BigInteger offset) {
+			super();
+			this.node = node;
+			this.offset = offset;
+		}
+	}
 
 	class Node {
 		Addressable object;
@@ -100,7 +118,7 @@ public class DynamicallyResizableWORMBigArray {
 				throw new IllegalStateException("Push can only be called on leafs");
 			Node newParent = new Node(null, size.clone(), parent, this, null, null, null );
 			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), newParent, null, null, this, next );
-			transactionally((tid)->{
+			structurally(tid->{
 				if (parent.left == this) {
 					parent.left = newParent;
 				} else {
@@ -109,21 +127,25 @@ public class DynamicallyResizableWORMBigArray {
 				parent = newParent;
 				parent.right = newSibling;
 				next = newSibling;
-				freeSpace.add(BigInteger.ONE);
+				freeSpace = freeSpace.add(BigInteger.ONE);
 			});
 		}
 		
 		/** Defragment's by appending and zeroing the next (if it would be under sizeLimit) */
-		public void defragment(long sizeLimit) {
+		public void defragment(int sizeLimit) {
 			if (object == null) 
 				throw new IllegalStateException("Defrag can only be called on leafs");
 			if (next == null)
-				throw new IllegalStateException("Defrag should not be called on right nodes");
-			transactionally((tid)->{
+				throw new IllegalStateException("Should not be called on tail node");
+			transactionally(tid->{
+				if (next.object.size(tid)==0) 
+					return;
 				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
 					object.append(next.object, tid);
+					size.set(BigInteger.valueOf(object.size(tid)),tid);
 					next.object.set(ByteBuffer.allocate(0), tid);
-					freeSpace.add(BigInteger.ONE);
+					next.size.set(BigInteger.ZERO, tid);
+					freeSpace = freeSpace.add(BigInteger.ONE);
 				}
 			});
 		}
@@ -133,40 +155,149 @@ public class DynamicallyResizableWORMBigArray {
 	Node root; // The root never changes
 	Node head; // The head never changes
 	
-	// a lock and the set of variables guarded by it
+	// a pair of locks and the set of variables guarded by them
+	private static final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
 	private static final Object transactionLock = new Object();
-	UUID highWatermark;
-	BigInteger freeSpace;
-	BigInteger depth;
-	long sizeLimit;
+	volatile UUID highWatermark;
+	volatile BigInteger freeSpace;
+	volatile BigInteger depth;
+	final int fragmentLimit = Integer.MAX_VALUE;
 
+	/**
+	 * invoked anytime content structure is subject to change
+	 * @param transaction
+	 */
 	private void transactionally(Consumer<UUID> transaction) {
-		synchronized(transactionLock) {
-			UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
-			transaction.accept(transactionId);
-			highWatermark = transactionId;
+		structureLock.readLock().lock();
+		try {
+			synchronized(transactionLock) {
+				UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
+				transaction.accept(transactionId);
+				highWatermark = transactionId;
+			}
+		} finally {
+			structureLock.readLock().unlock();
 		}
 	}
 	
-	// there can only be one push active at a time
+	/**
+	 * invoked anytime tree structure is subject to change
+	 * @param transaction
+	 */
+	private void structurally(Consumer<UUID> transaction) {
+		structureLock.writeLock().lock();
+		try {
+			transactionally(transaction);
+		} finally {
+			structureLock.writeLock().unlock();
+		}
+	}
+	
+	// in addition to the structure lock, there can only be one push active at a time
 	private static final Object pushLock = new Object();
 	private void push() {
 		synchronized(pushLock) {
 			for (Node active = head; active!=null; active = active.next.next) 
 				active.push();
-			transactionally((tid)->{
-				depth.add(BigInteger.ONE);
+			transactionally(tid->{
+				depth = depth.add(BigInteger.ONE);
 			});
 		}
 	}
 	
 	private void defragment() {
 		for (Node active = head; active != null; active = active.next.next) 
-			active.defragment(sizeLimit);
+			active.defragment(fragmentLimit);
 	}
 	
-	public void insert(ByteBuffer data, BigInteger offset, long length) {
+	private Location locate(BigInteger offset, UUID atMark) {
+		Node active = root;
+		while (active.object == null) {
+			if (active.size.get(atMark).compareTo(offset) <= 0) {
+				offset = offset.subtract(active.size.get(atMark));
+				active = active.right;
+			} else {
+				active = active.left;
+			}
+		}
+		return new Location(active,offset);
+	}
+	
+	/**
+	 * insert data.
+	 * @param data
+	 * @param offset
+	 */
+	public void insert(ByteBuffer data, BigInteger offset, int length) {
+
+		// handle emergency push:
+		if (freeSpace.compareTo(BigInteger.valueOf(2))<=0)
+			push();
+
+		transactionally(tid->{
+			Location l = locate(offset,tid);
+			if (!l.offset.equals(BigInteger.ZERO)) {
+				split(l.node, l.offset.intValue() ,tid);
+			}
+			// the addressable may have moved post split:
+			l = locate(offset,tid);
+			
+			Node target = makeSpace(l.node, tid);
+			
+			// now that current node is 0, do insert:
+			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
+			// and propagate size to root:
+			propagateToRoot(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
+			
+		});
 		
+		checkFreeSpace();
+	}
+
+	private void propagateToRoot(Node target, BigInteger difference, UUID tid) {
+		for (; target!= null; target = target.parent) 
+			target.size.set(target.size.get(tid).add(difference), tid);
+	}
+
+	private Node makeSpace( Node active, UUID tid) {
+		// find the closest space
+		Node forwards = active;
+		Node backwards = active;
+		while (!forwards.size.equals(BigInteger.ZERO) && !backwards.size.equals(BigInteger.ZERO)) {
+			if (forwards.next!=null)
+				forwards = forwards.next;
+			if (backwards.previous!=null)
+				backwards = backwards.previous;
+		}
+		
+		// this actually bubbles backwards from the found node until the current node (or its previous) is a zero 
+		if (forwards.size.equals(BigInteger.ZERO)) {
+			while (forwards != active) {
+				forwards.swapPrevious(tid);
+				forwards = forwards.previous;
+			}
+			return forwards;
+		} else {
+			while (backwards.next != active) {
+				backwards.swapNext(tid);
+				backwards = backwards.next;
+			}
+			return backwards;
+		}
+	}
+
+	private void split(Node node, int offset, UUID tid) {
+		Addressable orphan = node.object.slice(offset, tid);
+		node.object.resize(offset, tid);
+		BigInteger difference = BigInteger.valueOf(offset).subtract(node.size.get(tid));
+		propagateToRoot(node, difference, tid);
+		
+		
+		Node target = makeSpace(node, tid);
+		target.swapNext(tid); //move the space to the right
+		target = target.next;
+		target.object = orphan;
+		propagateToRoot(target, difference.negate(), tid);
 	}
 
 	public void remove(BigInteger offset, BigInteger length ) {
