@@ -3,11 +3,7 @@ package com.ddougher.util;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
-import java.util.Spliterator;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -313,6 +309,7 @@ public class DynamicallyResizableWORMBigArray {
 		}
 	}
 
+	@SuppressWarnings("unused")
 	private final void optimizeSpace() throws InterruptedException {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
  		while (true) {
