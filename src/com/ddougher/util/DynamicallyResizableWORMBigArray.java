@@ -344,7 +344,7 @@ public class DynamicallyResizableWORMBigArray {
 		// find the closest space
 		Node forwards = active;
 		Node backwards = active;
-		while (!forwards.size.equals(BigInteger.ZERO) && !backwards.size.equals(BigInteger.ZERO)) {
+		while (!forwards.size.get(tid).equals(BigInteger.ZERO) && !backwards.size.get(tid).equals(BigInteger.ZERO)) {
 			if (forwards.next!=null)
 				forwards = forwards.next;
 			if (backwards.previous!=null)
@@ -352,7 +352,7 @@ public class DynamicallyResizableWORMBigArray {
 		}
 		
 		// this actually bubbles backwards from the found node until the current node (or its previous) is a zero 
-		if (forwards.size.equals(BigInteger.ZERO)) {
+		if (forwards.size.get(tid).equals(BigInteger.ZERO)) {
 			while (forwards != active) {
 				forwards.swapPrevious(tid);
 				forwards = forwards.previous;
