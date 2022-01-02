@@ -5,9 +5,12 @@ import java.nio.ByteBuffer;
 import java.util.Iterator;
 import java.util.Spliterator;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
@@ -34,6 +37,8 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  */
 /*
  * This works by maintaining a constant, cross linked tree structure with all nodes represented. 
+ * This is slightly more expensive than a skip list, but much better balanced, capable of concurrent
+ * modification (like: defragmentation, growth, and redistribution), and time travel  
  * 
  * Operations are structured as moves, swaps, splits, consolidations, and other mutations of the 
  * Addressable and size values of nodes, but the structure of the tree remains constant.
@@ -44,6 +49,8 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  * The Addressable provider is encouraged but not required to store object history... doing so is the basis
  * of the time travel feature. This also enables the transactional behavior, as the system can watermark 
  * for outstanding transactions.
+ * 
+ * This structure is a precursor to "engrams". (yes, i just borrowed from a science fiction novel)
  * 
  */
 public class DynamicallyResizableWORMBigArray {
@@ -141,21 +148,23 @@ public class DynamicallyResizableWORMBigArray {
 		}
 		
 		/** Defragment's by appending and zeroing the next (if it would be under sizeLimit) */
-		public void defragment(int sizeLimit) {
+		public boolean defragment(int sizeLimit) {
 			if (object == null) 
 				throw new IllegalStateException("Defrag can only be called on leafs");
 			if (next == null)
 				throw new IllegalStateException("Should not be called on tail node");
-			transactionally(tid->{
+			return transactionally(tid->{
 				if (next.object.size(tid)==0) 
-					return;
+					return false;
 				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
+					BigInteger difference = next.size.get(tid);
 					object.append(next.object, tid);
-					size.set(BigInteger.valueOf(object.size(tid)),tid);
 					next.object.set(ByteBuffer.allocate(0), tid);
-					next.size.set(BigInteger.ZERO, tid);
+					propagateToCommon(this, next, difference, difference.negate(), tid);
 					freeSpace = freeSpace.add(BigInteger.ONE);
+					return true;
 				}
+				return false;
 			});
 		}
 		
@@ -172,7 +181,7 @@ public class DynamicallyResizableWORMBigArray {
 		}
 	}
 
-	Node root; // The root never changes
+	Node root; // After the first push, the root never changes
 	Node head; // The head never changes
 	
 	// a pair of locks and the set of variables guarded by them
@@ -180,37 +189,52 @@ public class DynamicallyResizableWORMBigArray {
 	private static final Object transactionLock = new Object();
 	volatile UUID highWatermark;
 	volatile BigInteger freeSpace;
-	volatile BigInteger depth;
+	volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 	final int fragmentLimit = Integer.MAX_VALUE;
 
 	/**
 	 * invoked anytime content structure is subject to change
 	 * @param transaction
 	 */
-	private void transactionally(Consumer<UUID> transaction) {
+	private <T> T transactionally(Function<UUID, T> transaction) {
 		structureLock.readLock().lock();
 		try {
 			synchronized(transactionLock) {
 				UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
-				transaction.accept(transactionId);
+				T result = transaction.apply(transactionId);
 				highWatermark = transactionId;
+				return result;
 			}
 		} finally {
 			structureLock.readLock().unlock();
 		}
 	}
 	
+	private void transactionally(Consumer<UUID> transaction) {
+		transactionally(tid->{
+			transaction.accept(tid);
+			return null;
+		});
+	}
+	
 	/**
 	 * invoked anytime tree structure is subject to change
 	 * @param transaction
 	 */
-	private void structurally(Consumer<UUID> transaction) {
+	private <T> T structurally(Function<UUID, T> transaction) {
 		structureLock.writeLock().lock();
 		try {
-			transactionally(transaction);
+			return transactionally(transaction);
 		} finally {
 			structureLock.writeLock().unlock();
 		}
+	}
+	
+	private void structurally(Consumer<UUID> transaction) {
+		structurally(tid->{
+			transaction.accept(tid);
+			return null;
+		});
 	}
 	
 	// in addition to the structure lock, there can only be one push active at a time
@@ -221,6 +245,7 @@ public class DynamicallyResizableWORMBigArray {
 				active.push();
 			transactionally(tid->{
 				depth = depth.add(BigInteger.ONE);
+				return null;
 			});
 		}
 	}
@@ -270,11 +295,39 @@ public class DynamicallyResizableWORMBigArray {
 			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
 			// and propagate size to root:
 			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
-			
+
+			freeSpace.subtract(BigInteger.ONE);
 		});
 		
 		checkFreeSpace();
 	}
+
+	public final Object freeSpaceOptimizer = new Object();
+	public int freeSpaceTicker = 0;
+	
+	/** If there is less than 20% free space then starts the space optimizer if it isnt already started */
+	private void checkFreeSpace() {
+		synchronized (freeSpaceOptimizer) {
+			if (0==(freeSpaceTicker = (freeSpaceTicker+1)%100))
+				freeSpaceOptimizer.notify();
+		}
+	}
+
+	private final void optimizeSpace() throws InterruptedException {
+		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
+ 		while (true) {
+ 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))<=0) {
+ 				defragment();
+ 			}
+ 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))<=0) {
+ 				push();
+ 			}
+ 			// TODO - Optimize the hole locations
+ 			synchronized (freeSpaceOptimizer) {
+				freeSpaceOptimizer.wait(1000);
+ 			}
+		}
+	};
 
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
 		while (a!=b) {
@@ -329,6 +382,8 @@ public class DynamicallyResizableWORMBigArray {
 		target = target.next;
 		target.object.set(slice, tid);
 		propagateToParents(target, difference.negate(), tid);
+
+		freeSpace.subtract(BigInteger.ONE);
 	}
 
 	public void remove(BigInteger offset, BigInteger length ) {
