@@ -56,9 +56,18 @@ public class DynamicallyResizableWORMBigArray {
 	
 	public interface Addressable {
 		void set(ByteBuffer data, UUID mark);
+		void set(Addressable src, UUID mark);
 		void append(Addressable a, UUID mark);
 		long size(UUID mark);
 		ByteBuffer get(UUID mark);
+
+		/** swaps a and b */
+		default void swap(Addressable b, UUID mark) {
+			ByteBuffer tmp = b.get(mark);
+			b.set(get(mark), mark);
+			set(tmp,mark);
+		}
+		
 		/** changes the effective size of this addressable. Essentially the same as set(get(mark).duplicate().position(length).flip(),mark) */
 		default void resize(int length, UUID mark) {
 			set((ByteBuffer)get(mark).duplicate().position(length).flip(),mark);
@@ -85,8 +94,8 @@ public class DynamicallyResizableWORMBigArray {
 	}
 
 	class Node {
-		Addressable object;
-		Sizeable size;
+		final Addressable object;
+		final Sizeable size;
 		Node parent;
 		Node left;
 		Node right;
@@ -150,6 +159,17 @@ public class DynamicallyResizableWORMBigArray {
 			});
 		}
 		
+		public void swapPrevious(UUID mark) {
+			previous.object.swap(object, mark);
+			BigInteger difference = previous.size.get(mark).subtract(size.get(mark));
+			propagateToCommon(previous, this, difference.negate(), difference, mark);
+		}
+		
+		public void swapNext(UUID mark) {
+			next.object.swap(object, mark);
+			BigInteger difference = next.size.get(mark).subtract(size.get(mark));
+			propagateToCommon(next, this, difference.negate(), difference, mark);
+		}
 	}
 
 	Node root; // The root never changes
@@ -224,9 +244,11 @@ public class DynamicallyResizableWORMBigArray {
 	}
 	
 	/**
-	 * insert data.
+	 * Inserts a block of data at the given offset.
+	 * 
 	 * @param data
 	 * @param offset
+	 * @param length
 	 */
 	public void insert(ByteBuffer data, BigInteger offset, int length) {
 
@@ -247,14 +269,23 @@ public class DynamicallyResizableWORMBigArray {
 			// now that current node is 0, do insert:
 			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
 			// and propagate size to root:
-			propagateToRoot(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
+			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
 			
 		});
 		
 		checkFreeSpace();
 	}
 
-	private void propagateToRoot(Node target, BigInteger difference, UUID tid) {
+	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
+		while (a!=b) {
+			a.size.set(a.size.get(tid).add(diffa), tid);
+			b.size.set(b.size.get(tid).add(diffb), tid);
+			a = a.parent;
+			b = b.parent;
+		}
+	}
+	
+	private void propagateToParents(Node target, BigInteger difference, UUID tid) {
 		for (; target!= null; target = target.parent) 
 			target.size.set(target.size.get(tid).add(difference), tid);
 	}
@@ -287,17 +318,17 @@ public class DynamicallyResizableWORMBigArray {
 	}
 
 	private void split(Node node, int offset, UUID tid) {
-		Addressable orphan = node.object.slice(offset, tid);
+		Addressable slice = node.object.slice(offset, tid);
 		node.object.resize(offset, tid);
 		BigInteger difference = BigInteger.valueOf(offset).subtract(node.size.get(tid));
-		propagateToRoot(node, difference, tid);
+		propagateToParents(node, difference, tid);
 		
 		
 		Node target = makeSpace(node, tid);
 		target.swapNext(tid); //move the space to the right
 		target = target.next;
-		target.object = orphan;
-		propagateToRoot(target, difference.negate(), tid);
+		target.object.set(slice, tid);
+		propagateToParents(target, difference.negate(), tid);
 	}
 
 	public void remove(BigInteger offset, BigInteger length ) {
