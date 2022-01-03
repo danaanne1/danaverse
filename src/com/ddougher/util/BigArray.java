@@ -54,7 +54,7 @@ public class BigArray {
 	public interface Sizeable {
 		void set(BigInteger size, UUID mark);
 		BigInteger get(UUID mark);
-		Sizeable clone();
+		Sizeable duplicate();
 	}
 	
 	public interface Addressable {
@@ -85,6 +85,7 @@ public class BigArray {
 	}
 	
 	AssetFactory assetFactory;
+	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
 	
 	class Location {
 		Node node;
@@ -128,7 +129,7 @@ public class BigArray {
 		public void push() {
 			if (object == null) 
 				throw new IllegalStateException("Push can only be called on leafs");
-			Node newParent = new Node(null, size.clone(), parent, this, null, null, null );
+			Node newParent = new Node(null, size.duplicate(), parent, this, null, null, null );
 			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), newParent, null, null, this, next );
 			structurally(tid->{
 				if (parent.left == this) {
@@ -155,7 +156,7 @@ public class BigArray {
 				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
 					BigInteger difference = next.size.get(tid);
 					object.append(next.object, tid);
-					next.object.set(ByteBuffer.allocate(0), tid);
+					next.object.set(ZERO_BUFFER, tid);
 					propagateToCommon(this, next, difference, difference.negate(), tid);
 					freeSpace = freeSpace.add(BigInteger.ONE);
 					return true;
@@ -342,13 +343,15 @@ public class BigArray {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
  		while (true) {
 			try {
-	 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 	 				defragment();
 	 			}
-	 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 	 				push();
 	 			}
 	 			// TODO - Optimize the hole locations
+	 			
+	 			
 	 			synchronized (freeSpaceOptimizer) {
 						freeSpaceOptimizer.wait(1000);
 	 			}
