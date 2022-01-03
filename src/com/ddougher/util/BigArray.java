@@ -46,10 +46,10 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  * of the time travel feature. This also enables the transactional behavior, as the system can watermark 
  * for outstanding transactions.
  * 
- * This structure is a precursor to "engrams". (yes, i just borrowed from a science fiction novel)
+ * This structure is a precursor to "engrams". (yes, i just borrowed from a "science fiction" novel)
  * 
  */
-public class DynamicallyResizableWORMBigArray {
+public class BigArray {
 
 	public interface Sizeable {
 		void set(BigInteger size, UUID mark);
@@ -188,6 +188,33 @@ public class DynamicallyResizableWORMBigArray {
 	volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 	final int fragmentLimit = Integer.MAX_VALUE;
 
+	
+	
+	
+	
+	/**
+	 * @param assetFactory
+	 */
+	public BigArray(AssetFactory assetFactory) {
+		super();
+		this.assetFactory = assetFactory;
+		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
+		freeSpace = BigInteger.valueOf(2);
+		depth = BigInteger.valueOf(2);
+		root = new Node(null, assetFactory.createSizeable(), null, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), root, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), root, null, null, null, head);
+		root.left = head;
+		root.right = head.next;
+		push();
+		push();
+		push();
+		push();
+		Thread t = new Thread(this::optimizeSpace);
+		t.setDaemon(true);
+		t.start();
+	}
+
 	/**
 	 * invoked anytime content structure is subject to change
 	 * @param transaction
@@ -268,6 +295,7 @@ public class DynamicallyResizableWORMBigArray {
 	 * Inserts a block of data at the given offset.
 	 * 
 	 * @param data
+	 * .
 	 * @param offset
 	 * @param length
 	 */
@@ -310,19 +338,23 @@ public class DynamicallyResizableWORMBigArray {
 	}
 
 	@SuppressWarnings("unused")
-	private final void optimizeSpace() throws InterruptedException {
+	private final void optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
  		while (true) {
- 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))<=0) {
- 				defragment();
- 			}
- 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))<=0) {
- 				push();
- 			}
- 			// TODO - Optimize the hole locations
- 			synchronized (freeSpaceOptimizer) {
-				freeSpaceOptimizer.wait(1000);
- 			}
+			try {
+	 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+	 				defragment();
+	 			}
+	 			if (BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+	 				push();
+	 			}
+	 			// TODO - Optimize the hole locations
+	 			synchronized (freeSpaceOptimizer) {
+						freeSpaceOptimizer.wait(1000);
+	 			}
+			} catch (Exception e) {
+				e.printStackTrace(System.err);
+			}
 		}
 	};
 
