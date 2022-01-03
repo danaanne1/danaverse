@@ -140,6 +140,8 @@ public class BigArray {
 				parent = newParent;
 				parent.right = newSibling;
 				next = newSibling;
+				if (newSibling.next!=null)
+					newSibling.next.previous = newSibling;
 				freeSpace = freeSpace.add(BigInteger.ONE);
 			});
 		}
@@ -176,6 +178,34 @@ public class BigArray {
 			BigInteger difference = next.size.get(mark).subtract(size.get(mark));
 			propagateToCommon(next, this, difference.negate(), difference, mark);
 		}
+		
+		public String dump(String prefix, int depth) {
+			StringBuilder sb = new StringBuilder();
+			for (int i = 0; i < depth; i++)
+				sb.append("    ");
+			String space = sb.toString();
+			sb = new StringBuilder();
+			sb
+				.append(space+prefix+System.identityHashCode(this))
+				.append("( ")
+				.append("s: "+size.get(highWatermark))
+				.append(", ")
+				.append("p: "+System.identityHashCode(previous))
+				.append(", ")
+				.append("n: "+System.identityHashCode(next))
+				.append(", ")
+				.append("u: "+System.identityHashCode(parent))
+				.append(", ")
+				.append("o: "+object)
+				.append(")\n");
+			
+			if (left != null)
+				sb.append(left.dump("l:",depth+1));
+			if (right != null)
+				sb.append(right.dump("r:",depth+1));
+			
+			return sb.toString();
+		}	
 	}
 
 	Node root; // After the first push, the root never changes
@@ -189,7 +219,16 @@ public class BigArray {
 	volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 	final int fragmentLimit = Integer.MAX_VALUE;
 
-	
+	public void dump() {
+		StringBuilder sb = new StringBuilder();
+		sb
+			.append("HWM: " + highWatermark + "\n")
+			.append("FRE: " + freeSpace + "\n")
+			.append("DEP: " + depth + "\n")
+			.append("ROOT\n" +root.dump("",1))
+			.append("HEAD\n" + head.dump("",1));
+		System.out.println(sb.toString());
+	}
 	
 	
 	
@@ -208,12 +247,9 @@ public class BigArray {
 		root.left = head;
 		root.right = head.next;
 		push();
-		push();
-		push();
-		push();
-		Thread t = new Thread(this::optimizeSpace);
-		t.setDaemon(true);
-		t.start();
+//		Thread t = new Thread(this::optimizeSpace);
+//		t.setDaemon(true);
+//		t.start();
 	}
 
 	/**
@@ -282,7 +318,7 @@ public class BigArray {
 	private Location locate(BigInteger offset, UUID atMark) {
 		Node active = root;
 		while (active.object == null) {
-			if (active.size.get(atMark).compareTo(offset) <= 0) {
+			if (active.size.get(atMark).compareTo(offset) < 0) {
 				offset = offset.subtract(active.size.get(atMark));
 				active = active.right;
 			} else {
@@ -300,8 +336,9 @@ public class BigArray {
 	 * @param offset
 	 * @param length
 	 */
-	public void insert(ByteBuffer data, BigInteger offset, int length) {
-
+	public void insert(ByteBuffer data, BigInteger offset) {
+		int length = data.limit();
+		
 		// handle emergency push:
 		if (freeSpace.compareTo(BigInteger.valueOf(2))<=0)
 			push();
@@ -321,7 +358,7 @@ public class BigArray {
 			// and propagate size to root:
 			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
 
-			freeSpace.subtract(BigInteger.ONE);
+			freeSpace = freeSpace.subtract(BigInteger.ONE);
 		});
 		
 		checkFreeSpace();
@@ -415,7 +452,7 @@ public class BigArray {
 		target.object.set(slice, tid);
 		propagateToParents(target, difference.negate(), tid);
 
-		freeSpace.subtract(BigInteger.ONE);
+		freeSpace = freeSpace.subtract(BigInteger.ONE);
 	}
 
 	public void remove(BigInteger offset, BigInteger length ) {

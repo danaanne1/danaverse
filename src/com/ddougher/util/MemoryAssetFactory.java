@@ -2,6 +2,7 @@ package com.ddougher.util;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.TreeMap;
@@ -131,6 +132,12 @@ public class MemoryAssetFactory implements AssetFactory {
 			
 			set(newBuffer,mark);
 			
+		}
+		public String toString() {
+			ByteBuffer b = get(null);
+			byte [] buf = new byte[Math.min(20, b.limit())];
+			((ByteBuffer) b.duplicate().rewind()).get(buf);
+			return Arrays.toString(buf);
 		}
 		
 	};
