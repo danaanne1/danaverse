@@ -100,6 +100,7 @@ public class BigArray {
 	class Node {
 		final Addressable object;
 		final Sizeable size;
+		volatile BigInteger free;
 		Node parent;
 		Node left;
 		Node right;
@@ -109,6 +110,7 @@ public class BigArray {
 		(
 				Addressable object, 
 				Sizeable size, 
+				BigInteger free,
 				Node parent,
 				Node left, 
 				Node right,
@@ -123,14 +125,15 @@ public class BigArray {
 			this.right = right;
 			this.previous = previous;
 			this.next = next;
+			this.free = free;
 		}
 
 		/** Adds a new layer */
 		public void push() {
 			if (object == null) 
 				throw new IllegalStateException("Push can only be called on leafs");
-			Node newParent = new Node(null, size.duplicate(), parent, this, null, null, null );
-			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), newParent, null, null, this, next );
+			Node newParent = new Node(null, size.duplicate(), free, parent, this, null, null, null );
+			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO ,newParent, null, null, this, next );
 			structurally(tid->{
 				if (parent.left == this) {
 					parent.left = newParent;
@@ -142,7 +145,7 @@ public class BigArray {
 				next = newSibling;
 				if (newSibling.next!=null)
 					newSibling.next.previous = newSibling;
-				freeSpace = freeSpace.add(BigInteger.ONE);
+				freeToParents(newSibling, BigInteger.ONE);
 			});
 		}
 		
@@ -160,7 +163,7 @@ public class BigArray {
 					object.append(next.object, tid);
 					next.object.set(ZERO_BUFFER, tid);
 					propagateToCommon(this, next, difference, difference.negate(), tid);
-					freeSpace = freeSpace.add(BigInteger.ONE);
+					freeToParents(next, BigInteger.ONE);
 					return true;
 				}
 				return false;
@@ -169,12 +172,24 @@ public class BigArray {
 		
 		public void swapPrevious(UUID mark) {
 			previous.object.swap(object, mark);
+
+			if (previous.size.get(mark).equals(BigInteger.ZERO)) 
+				freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
+			else if (size.get(mark).equals(BigInteger.ZERO))
+				freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
+
 			BigInteger difference = previous.size.get(mark).subtract(size.get(mark));
 			propagateToCommon(previous, this, difference.negate(), difference, mark);
 		}
 		
 		public void swapNext(UUID mark) {
 			next.object.swap(object, mark);
+
+			if (next.size.get(mark).equals(BigInteger.ZERO)) 
+				freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
+			else if (size.get(mark).equals(BigInteger.ZERO))
+				freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
+
 			BigInteger difference = next.size.get(mark).subtract(size.get(mark));
 			propagateToCommon(next, this, difference.negate(), difference, mark);
 		}
@@ -189,6 +204,8 @@ public class BigArray {
 				.append(space+prefix+System.identityHashCode(this))
 				.append("( ")
 				.append("s: "+size.get(highWatermark))
+				.append(", ")
+				.append("f: "+free)
 				.append(", ")
 				.append("p: "+System.identityHashCode(previous))
 				.append(", ")
@@ -215,7 +232,6 @@ public class BigArray {
 	private static final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
 	private static final Object transactionLock = new Object();
 	volatile UUID highWatermark;
-	volatile BigInteger freeSpace;
 	volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 	final int fragmentLimit = Integer.MAX_VALUE;
 
@@ -223,7 +239,7 @@ public class BigArray {
 		StringBuilder sb = new StringBuilder();
 		sb
 			.append("HWM: " + highWatermark + "\n")
-			.append("FRE: " + freeSpace + "\n")
+			.append("FRE: " + root.free + "\n")
 			.append("DEP: " + depth + "\n")
 			.append("ROOT\n" +root.dump("",1))
 			.append("HEAD\n" + head.dump("",1));
@@ -239,11 +255,10 @@ public class BigArray {
 		super();
 		this.assetFactory = assetFactory;
 		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
-		freeSpace = BigInteger.valueOf(2);
 		depth = BigInteger.valueOf(2);
-		root = new Node(null, assetFactory.createSizeable(), null, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), root, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), root, null, null, null, head);
+		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), null, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, head);
 		root.left = head;
 		root.right = head.next;
 		push();
@@ -340,7 +355,7 @@ public class BigArray {
 		int length = data.limit();
 		
 		// handle emergency push:
-		if (freeSpace.compareTo(BigInteger.valueOf(2))<=0)
+		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
 			push();
 
 		transactionally(tid->{
@@ -358,7 +373,7 @@ public class BigArray {
 			// and propagate size to root:
 			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
 
-			freeSpace = freeSpace.subtract(BigInteger.ONE);
+			freeToParents(target, BigInteger.ONE.negate());
 		});
 		
 		checkFreeSpace();
@@ -380,13 +395,15 @@ public class BigArray {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
  		while (true) {
 			try {
+				BigInteger freeSpace = root.free;
 	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 	 				defragment();
 	 			}
 	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 	 				push();
 	 			}
-	 			// TODO - Optimize the hole locations
+	 			
+	 			// optimize free space balance
 	 			
 	 			
 	 			synchronized (freeSpaceOptimizer) {
@@ -407,11 +424,25 @@ public class BigArray {
 		}
 	}
 	
+	private void freeToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb) {
+		while (a!=b) {
+			a.free = a.free.add(diffa);
+			b.free = b.free.add(diffb);
+			a = a.parent;
+			b = b.parent;
+		}
+	}
+
 	private void propagateToParents(Node target, BigInteger difference, UUID tid) {
 		for (; target!= null; target = target.parent) 
 			target.size.set(target.size.get(tid).add(difference), tid);
 	}
 
+	private void freeToParents(Node target, BigInteger difference) {
+		for (; target != null; target = target.parent)
+			target.free = target.free.add(difference);
+	}
+	
 	private Node makeSpace( Node active, UUID tid) {
 		// find the closest space
 		Node forwards = active;
@@ -451,8 +482,7 @@ public class BigArray {
 		target = target.next;
 		target.object.set(slice, tid);
 		propagateToParents(target, difference.negate(), tid);
-
-		freeSpace = freeSpace.subtract(BigInteger.ONE);
+		freeToParents(target, BigInteger.ONE.negate());
 	}
 
 	public void remove(BigInteger offset, BigInteger length ) {
