@@ -66,6 +66,14 @@ class TestBigArray {
 		a.dump();
 		a.insert(ByteBuffer.wrap(new byte [] { 13, 14, 15, 16, 17, 18 }), BigInteger.ZERO);
 		a.dump();
+		a.optimizeSpace();
+		a.dump();
+		a.optimizeSpace();
+		a.dump();
+		a.optimizeSpace();
+		a.dump();
+		a.optimizeSpace();
+		a.dump();
 	}
 
 	

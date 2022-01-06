@@ -2,7 +2,9 @@ package com.ddougher.util;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.util.Deque;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
@@ -175,7 +177,7 @@ public class BigArray {
 
 			if (previous.size.get(mark).equals(BigInteger.ZERO)) 
 				freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			else if (size.get(mark).equals(BigInteger.ZERO))
+			if (size.get(mark).equals(BigInteger.ZERO))
 				freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
 
 			BigInteger difference = previous.size.get(mark).subtract(size.get(mark));
@@ -187,7 +189,7 @@ public class BigArray {
 
 			if (next.size.get(mark).equals(BigInteger.ZERO)) 
 				freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			else if (size.get(mark).equals(BigInteger.ZERO))
+			if (size.get(mark).equals(BigInteger.ZERO))
 				freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
 
 			BigInteger difference = next.size.get(mark).subtract(size.get(mark));
@@ -266,7 +268,7 @@ public class BigArray {
 //		t.setDaemon(true);
 //		t.start();
 	}
-
+	
 	/**
 	 * invoked anytime content structure is subject to change
 	 * @param transaction
@@ -374,47 +376,117 @@ public class BigArray {
 			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
 
 			freeToParents(target, BigInteger.ONE.negate());
+
+			freeSpaceCheck(target, tid);
 		});
-		
-		checkFreeSpace();
 	}
 
-	public final Object freeSpaceOptimizer = new Object();
-	public int freeSpaceTicker = 0;
+	private final Object freeBalanceLock = new Object();
+	private final LinkedHashSet<Node> freeBalanceQueue = new LinkedHashSet<>();
+	private int freeSpaceTicker = 0;
 	
-	/** If there is less than 20% free space then starts the space optimizer if it isnt already started */
-	private void checkFreeSpace() {
-		synchronized (freeSpaceOptimizer) {
+	/** Checks if nodes need to be rebalanced, and every 100 ticks wakes up the space optimizer */
+	private void freeSpaceCheck(Node target, UUID tid) {
+		Node winner = target.parent;
+		BigInteger largestDifference = BigInteger.ZERO;
+		while (target.parent != null) {
+			target = target.parent;
+			BigInteger difference = target.left.free.subtract(target.right.free).abs();
+			if (difference.compareTo(largestDifference) > 0) {
+				winner = target;
+				largestDifference = difference;
+			}
+		}
+		synchronized (freeBalanceLock) {
+			if (BigInteger.valueOf(2).compareTo(largestDifference)<0)
+				freeBalanceQueue.add(winner);
 			if (0==(freeSpaceTicker = (freeSpaceTicker+1)%100))
-				freeSpaceOptimizer.notify();
+				freeBalanceLock.notify();
 		}
 	}
 
 	@SuppressWarnings("unused")
-	private final void optimizeSpace() {
-		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
+	private final void optimizeSpaceLoop() {
  		while (true) {
 			try {
-				BigInteger freeSpace = root.free;
-	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-	 				defragment();
-	 			}
-	 			if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-	 				push();
-	 			}
-	 			
-	 			// optimize free space balance
-	 			
-	 			
-	 			synchronized (freeSpaceOptimizer) {
-						freeSpaceOptimizer.wait(1000);
-	 			}
-			} catch (Exception e) {
-				e.printStackTrace(System.err);
+				optimizeSpace();
+
+				synchronized (freeBalanceLock) {
+					if (freeBalanceQueue.isEmpty())
+						freeBalanceLock.wait(1000);
+				}
+			} catch (Exception ie) {
+				ie.printStackTrace();
+			}
+ 		}
+	}
+
+	// VisibleForTesting
+	protected void optimizeSpace() {
+		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
+		BigInteger freeSpace = root.free;
+		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+			defragment();
+		}
+		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+			push();
+		}
+		
+		synchronized (freeBalanceLock) {
+			if (!freeBalanceQueue.isEmpty()) {
+				Node toBalance = freeBalanceQueue.iterator().next();
+				freeBalance(toBalance);
 			}
 		}
 	};
 
+	private void freeBalance(Node node) {
+		transactionally(tid->{
+			BigInteger difference = node.right.free.subtract(node.left.free);
+			Node source;
+			Node destination;
+			if (difference.abs().compareTo(BigInteger.ONE)<=0) { // difference is <= 1
+				freeBalanceQueue.remove(node);
+				return;
+			}
+			if (difference.compareTo(BigInteger.ZERO)>0) { // right side has more space
+				source = leftDescent(node.right, false);
+				destination = rightDescent(node.left, true);
+				for (Node n = source; n != destination; n = n.previous)
+					n.swapPrevious(tid);
+			} else { // left side has more space
+				source = rightDescent(node.left, false);
+				destination = leftDescent(node.right, true);
+				for (Node n = source; n != destination; n = n.next)
+					n.swapNext(tid);
+			}
+		});
+	}
+
+	private Node rightDescent(Node node, boolean isInverted) {
+		if (node.object != null)
+			return node;
+		if 
+		(	
+			(!isInverted && node.left.free.compareTo(node.right.free)>0)||
+			(isInverted && node.left.free.compareTo(node.right.free)<0)
+		)
+			return rightDescent(node.left, isInverted);
+		return rightDescent(node.right, isInverted);
+	}
+
+	private Node leftDescent(Node node, boolean isInverted) {
+		if (node.object != null)
+			return node;
+		if 
+		(
+			(!isInverted && node.right.free.compareTo(node.left.free)>0)||
+			(isInverted && node.right.free.compareTo(node.left.free)<0)
+		)
+			return leftDescent(node.right, isInverted);
+		return leftDescent(node.left, isInverted);
+	}
+	
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
 		while (a!=b) {
 			a.size.set(a.size.get(tid).add(diffa), tid);
