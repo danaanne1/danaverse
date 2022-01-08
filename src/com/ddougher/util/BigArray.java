@@ -377,31 +377,20 @@ public class BigArray {
 
 			freeToParents(target, BigInteger.ONE.negate());
 
+			while (true==freeBalance(target, tid));
+
 			freeSpaceCheck(target, tid);
 		});
 	}
 
-	private final Object freeBalanceLock = new Object();
-	private final LinkedHashSet<Node> freeBalanceQueue = new LinkedHashSet<>();
+	private final Object spaceLock = new Object();
 	private int freeSpaceTicker = 0;
 	
-	/** Checks if nodes need to be rebalanced, and every 100 ticks wakes up the space optimizer */
+	/** Every 100 ticks wakes up the space optimizer */
 	private void freeSpaceCheck(Node target, UUID tid) {
-		Node winner = target.parent;
-		BigInteger largestDifference = BigInteger.ZERO;
-		while (target.parent != null) {
-			target = target.parent;
-			BigInteger difference = target.left.free.subtract(target.right.free).abs();
-			if (difference.compareTo(largestDifference) > 0) {
-				winner = target;
-				largestDifference = difference;
-			}
-		}
-		synchronized (freeBalanceLock) {
-			if (BigInteger.valueOf(2).compareTo(largestDifference)<0)
-				freeBalanceQueue.add(winner);
+		synchronized (spaceLock) {
 			if (0==(freeSpaceTicker = (freeSpaceTicker+1)%100))
-				freeBalanceLock.notify();
+				spaceLock.notify();
 		}
 	}
 
@@ -411,9 +400,8 @@ public class BigArray {
 			try {
 				optimizeSpace();
 
-				synchronized (freeBalanceLock) {
-					if (freeBalanceQueue.isEmpty())
-						freeBalanceLock.wait(1000);
+				synchronized (spaceLock) {
+						spaceLock.wait(1000);
 				}
 			} catch (Exception ie) {
 				ie.printStackTrace();
@@ -431,36 +419,37 @@ public class BigArray {
 		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 			push();
 		}
-		
-		synchronized (freeBalanceLock) {
-			if (!freeBalanceQueue.isEmpty()) {
-				Node toBalance = freeBalanceQueue.iterator().next();
-				freeBalance(toBalance);
-			}
-		}
 	};
 
-	private void freeBalance(Node node) {
-		transactionally(tid->{
-			BigInteger difference = node.right.free.subtract(node.left.free);
-			Node source;
-			Node destination;
-			if (difference.abs().compareTo(BigInteger.ONE)<=0) { // difference is <= 1
-				freeBalanceQueue.remove(node);
-				return;
+	private boolean freeBalance(Node node, UUID tid) {
+		Node current = node;
+		Node winner = current.parent;
+		BigInteger largestDifference = BigInteger.ZERO;
+		while (current.parent != null) {
+			current = current.parent;
+			BigInteger difference = current.left.free.subtract(current.right.free);
+			if (difference.abs().compareTo(largestDifference.abs()) > 0) {
+				winner = current;
+				largestDifference = difference;
 			}
-			if (difference.compareTo(BigInteger.ZERO)>0) { // right side has more space
-				source = leftDescent(node.right, false);
-				destination = rightDescent(node.left, true);
-				for (Node n = source; n != destination; n = n.previous)
-					n.swapPrevious(tid);
-			} else { // left side has more space
-				source = rightDescent(node.left, false);
-				destination = leftDescent(node.right, true);
-				for (Node n = source; n != destination; n = n.next)
-					n.swapNext(tid);
-			}
-		});
+		}
+		if (largestDifference.abs().compareTo(BigInteger.valueOf(1))<=0) { // difference is <= 1
+			return false;
+		}
+		Node source;
+		Node destination;
+		if (largestDifference.compareTo(BigInteger.ZERO)<0) { // right side has more space
+			source = leftDescent(winner.right, false);
+			destination = rightDescent(winner.left, true);
+			for (Node n = source; n != destination; n = n.previous)
+				n.swapPrevious(tid);
+		} else { // left side has more space
+			source = rightDescent(winner.left, false);
+			destination = leftDescent(winner.right, true);
+			for (Node n = source; n != destination; n = n.next)
+				n.swapNext(tid);
+		}
+		return true;
 	}
 
 	private Node rightDescent(Node node, boolean isInverted) {

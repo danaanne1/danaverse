@@ -58,19 +58,15 @@ class TestBigArray {
 	void test2() {
 		BigArray a = new BigArray(new MemoryAssetFactory());
 		a.dump();
-		a.insert(ByteBuffer.wrap(new byte [] { 1, 2, 3, 4, 5 }), BigInteger.ZERO);
-		a.dump();
-		a.insert(ByteBuffer.wrap(new byte [] { 6, 7, 8, 9 }), BigInteger.ZERO);
-		a.dump();
-		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), BigInteger.ZERO);
+		a.insert(ByteBuffer.wrap(new byte [] { 19, 20 }), BigInteger.ZERO);
 		a.dump();
 		a.insert(ByteBuffer.wrap(new byte [] { 13, 14, 15, 16, 17, 18 }), BigInteger.ZERO);
 		a.dump();
-		a.optimizeSpace();
+		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), BigInteger.ZERO);
 		a.dump();
-		a.optimizeSpace();
+		a.insert(ByteBuffer.wrap(new byte [] { 6, 7, 8, 9 }), BigInteger.ZERO);
 		a.dump();
-		a.optimizeSpace();
+		a.insert(ByteBuffer.wrap(new byte [] { 1, 2, 3, 4, 5 }), BigInteger.ZERO);
 		a.dump();
 		a.optimizeSpace();
 		a.dump();
