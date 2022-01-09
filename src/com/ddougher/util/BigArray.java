@@ -397,20 +397,18 @@ public class BigArray {
 				// left insert
 				target = makeSpace(l.node, tid);
 			} else if (l.offset.equals(l.node.size.get(tid))) {
-				// right insert
+				// tail insert steals space 
 				target = makeSpace(l.node, tid);
 				target.swapNext(tid);
 				target = target.next;
 			} else  {
 				// split insert
-				split(l.node, l.offset.intValue() ,tid);
-				l = locate(offset,tid); // addressable may have moved post split
-				target = makeSpace(l.node, tid);
+				target = makeSpace(split(l.node, l.offset.intValue() ,tid), tid);
 			}
 
-			// now that current node is 0, do insert:
+			// target is now a 0 in the appropriate position:
 			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
-			// and propagate size to root:
+
 			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
 
 			freeToParents(target, BigInteger.ONE.negate());
@@ -619,7 +617,7 @@ public class BigArray {
 		}
 	}
 
-	private void split(Node node, int offset, UUID tid) {
+	private Node split(Node node, int offset, UUID tid) {
 		Addressable slice = node.object.slice(offset, tid);
 		node.object.resize(offset, tid);
 		BigInteger difference = BigInteger.valueOf(offset).subtract(node.size.get(tid));
@@ -632,6 +630,7 @@ public class BigArray {
 		target.object.set(slice, tid);
 		propagateToParents(target, difference.negate(), tid);
 		freeToParents(target, BigInteger.ONE.negate());
+		return target;
 	}
 
 	public BigInteger size() {
