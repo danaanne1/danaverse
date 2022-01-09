@@ -93,13 +93,14 @@ public class BigArray {
 		Addressable slice(int offset, UUID mark);
 	}
 
-	private static final BigInteger defaultOptimizerThreshold = BigInteger.valueOf(2);
-	private static final int defaultFragmentLimit = Integer.MAX_VALUE;
 	private static final HashSet<WeakReference<BigArray>> optimizerParticipants = new HashSet<WeakReference<BigArray>>();
-	private static final Optimizer defaultOptimizer = p -> { synchronized(optimizerParticipants) { optimizerParticipants.add(new WeakReference<BigArray>(p)); } };
 	private static final Object spaceLock = new Object();
 	private static final Thread optimizerThread = new Thread(BigArray::optimizeSpaceLoop);
 	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
+
+	public static final BigInteger defaultOptimizerThreshold = BigInteger.valueOf(2);
+	public static final int defaultFragmentLimit = Integer.MAX_VALUE;
+	public static final Optimizer defaultOptimizer = p -> { synchronized(optimizerParticipants) { optimizerParticipants.add(new WeakReference<BigArray>(p)); } };
 
 	static {
 		optimizerThread.setDaemon(true);
@@ -118,6 +119,7 @@ public class BigArray {
 
 	private Node root; // After the first push, the root never changes
 	private Node head; // The head never changes
+	private BigInteger nodeIdCounter = BigInteger.ZERO;
 	
 	private volatile UUID highWatermark;
 	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
@@ -163,6 +165,7 @@ public class BigArray {
 		Node right;
 		Node previous;
 		Node next;
+		BigInteger id;
 		public Node
 		(
 				Addressable object, 
@@ -183,6 +186,7 @@ public class BigArray {
 			this.previous = previous;
 			this.next = next;
 			this.free = free;
+			this.id = (nodeIdCounter = nodeIdCounter.add(BigInteger.ONE));
 		}
 
 		/** Adds a new layer */
@@ -258,32 +262,32 @@ public class BigArray {
 			String space = sb.toString();
 			sb = new StringBuilder();
 			sb
-				.append(space+prefix+System.identityHashCode(this))
-				.append("( ")
+				.append(space+prefix+id)
+				.append(" { ")
 				.append("s: "+size.get(highWatermark))
 				.append(", ")
 				.append("f: "+free)
 				.append(", ")
-				.append("p: "+System.identityHashCode(previous))
+				.append("p: "+(previous!=null?previous.id:"-"))
 				.append(", ")
-				.append("n: "+System.identityHashCode(next))
+				.append("n: "+(next!=null?next.id:"-"))
 				.append(", ")
-				.append("u: "+System.identityHashCode(parent))
+				.append("u: "+(parent!=null?parent.id:"-"))
 				.append(", ")
 				.append("o: "+object)
-				.append(")\n");
+				.append("}\n");
 			
 			if (left != null)
-				sb.append(left.dump("l:",depth+1));
+				sb.append(left.dump("L: ",depth+1));
 			if (right != null)
-				sb.append(right.dump("r:",depth+1));
+				sb.append(right.dump("R: ",depth+1));
 			
 			return sb.toString();
 		}	
 	}
 
-	public void dump() {
-		transactionally(tid->{
+	public String dump() {
+		return transactionally(tid->{
 			StringBuilder sb = new StringBuilder();
 			sb
 				.append("HWM: " + highWatermark + "\n")
@@ -291,7 +295,7 @@ public class BigArray {
 				.append("DEP: " + depth + "\n")
 				.append("ROOT\n" +root.dump("",1))
 				.append("HEAD\n" + head.dump("",1));
-			System.out.println(sb.toString());
+			return sb.toString();
 		});
 	}
 	
@@ -417,9 +421,6 @@ public class BigArray {
 		}
 	}
 
-	/*
-	 * Eventually this will get replaced with an "Optimizer" constructor parameter to allow for different pooling options.
-	 */
 	@SuppressWarnings({ "unchecked" })
 	private static final void optimizeSpaceLoop() {
  		while (true) {
@@ -448,7 +449,11 @@ public class BigArray {
  		}
 	}
 
-	// VisibleForTesting
+	/**
+	 * Runs full space optimization: Defragment, followed by push, followed by a spacewalk.
+	 * 
+	 * @return true if the spacewalk queue is empty
+	 */
 	protected boolean optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
 		BigInteger freeSpace = root.free;
@@ -485,7 +490,7 @@ public class BigArray {
 	 * 
 	 * @return true if the spacewalk queue is empty
 	 */
-	private boolean spaceWalk() {
+	protected boolean spaceWalk() {
 		return transactionally(tid->{
 			if (spaceWalkQueue.isEmpty())
 				return true;
@@ -500,7 +505,6 @@ public class BigArray {
 			if (difference.abs().compareTo(optimizerThreshold)<=0) { // difference is <= FREE_OFFSET
 				spaceWalkQueue.remove(node);
 			} else {
-				System.out.println("SPACE");
 				if (difference.compareTo(BigInteger.ZERO)<0) { 	
 					// right side has more space:
 					source = leftFreeDescent(node.right);
