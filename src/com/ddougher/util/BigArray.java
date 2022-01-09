@@ -56,6 +56,15 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  */
 public class BigArray {
 
+	public interface Optimizer {
+		void addParticipant(BigArray participant);
+	}
+
+	public interface AssetFactory {
+		Addressable createAddressable();
+		Sizeable createSizeable();
+	}
+
 	public interface Sizeable {
 		void set(BigInteger size, UUID mark);
 		BigInteger get(UUID mark);
@@ -83,14 +92,57 @@ public class BigArray {
 		/** Returns a new Addressable with a blank history that represents a subset of this addressable */
 		Addressable slice(int offset, UUID mark);
 	}
+
+	private static final BigInteger defaultOptimizerThreshold = BigInteger.valueOf(2);
+	private static final int defaultFragmentLimit = Integer.MAX_VALUE;
+	private static final HashSet<WeakReference<BigArray>> optimizerParticipants = new HashSet<WeakReference<BigArray>>();
+	private static final Optimizer defaultOptimizer = p -> { synchronized(optimizerParticipants) { optimizerParticipants.add(new WeakReference<BigArray>(p)); } };
+	private static final Object spaceLock = new Object();
+	private static final Thread optimizerThread = new Thread(BigArray::optimizeSpaceLoop);
+	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
+
+	static {
+		optimizerThread.setDaemon(true);
+		optimizerThread.start();
+	}
+
 	
-	public interface AssetFactory {
-		Addressable createAddressable();
-		Sizeable createSizeable();
+	private final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
+	private final Object transactionLock = new Object();
+	private final Object pushLock = new Object();
+	private final int fragmentLimit;
+	private final BigInteger optimizerThreshold;
+	private final Set<Node> spaceWalkQueue = Collections.synchronizedSet(new LinkedHashSet<>());
+
+	private AssetFactory assetFactory;
+
+	private Node root; // After the first push, the root never changes
+	private Node head; // The head never changes
+	
+	private volatile UUID highWatermark;
+	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
+
+	public BigArray(AssetFactory assetFactory, Optimizer optimizer, int fragmentLimit, BigInteger optimizerThreshold) {
+		super();
+		this.assetFactory = assetFactory;
+		this.fragmentLimit = fragmentLimit;
+		this.optimizerThreshold = optimizerThreshold;
+		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
+		depth = BigInteger.valueOf(2);
+		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), null, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, null);
+		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, head);
+		root.left = head;
+		root.right = head.next;
+		push();
+		optimizer.addParticipant(this); 
 	}
 	
-	AssetFactory assetFactory;
-	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
+	public BigArray(AssetFactory assetFactory) {
+		this(assetFactory, defaultOptimizer, defaultFragmentLimit, defaultOptimizerThreshold);
+	}
+
+	
 	
 	class Location {
 		Node node;
@@ -175,28 +227,28 @@ public class BigArray {
 			});
 		}
 		
-		public void swapPrevious(UUID mark) {
-			previous.object.swap(object, mark);
+		public void swapPrevious(UUID tid) {
+			previous.object.swap(object, tid);
 
-			if (previous.size.get(mark).equals(BigInteger.ZERO)) 
+			if (previous.size.get(tid).equals(BigInteger.ZERO)) 
 				freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			if (size.get(mark).equals(BigInteger.ZERO))
+			if (size.get(tid).equals(BigInteger.ZERO))
 				freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
 
-			BigInteger difference = previous.size.get(mark).subtract(size.get(mark));
-			propagateToCommon(previous, this, difference.negate(), difference, mark);
+			BigInteger difference = previous.size.get(tid).subtract(size.get(tid));
+			propagateToCommon(previous, this, difference.negate(), difference, tid);
 		}
 		
-		public void swapNext(UUID mark) {
-			next.object.swap(object, mark);
+		public void swapNext(UUID tid) {
+			next.object.swap(object, tid);
 
-			if (next.size.get(mark).equals(BigInteger.ZERO)) 
+			if (next.size.get(tid).equals(BigInteger.ZERO)) 
 				freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			if (size.get(mark).equals(BigInteger.ZERO))
+			if (size.get(tid).equals(BigInteger.ZERO))
 				freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
 
-			BigInteger difference = next.size.get(mark).subtract(size.get(mark));
-			propagateToCommon(next, this, difference.negate(), difference, mark);
+			BigInteger difference = next.size.get(tid).subtract(size.get(tid));
+			propagateToCommon(next, this, difference.negate(), difference, tid);
 		}
 		
 		public String dump(String prefix, int depth) {
@@ -230,16 +282,6 @@ public class BigArray {
 		}	
 	}
 
-	Node root; // After the first push, the root never changes
-	Node head; // The head never changes
-	
-	// a pair of locks and the set of variables guarded by them
-	private static final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
-	private static final Object transactionLock = new Object();
-	volatile UUID highWatermark;
-	volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
-	final int fragmentLimit = Integer.MAX_VALUE;
-
 	public void dump() {
 		transactionally(tid->{
 			StringBuilder sb = new StringBuilder();
@@ -251,33 +293,6 @@ public class BigArray {
 				.append("HEAD\n" + head.dump("",1));
 			System.out.println(sb.toString());
 		});
-	}
-	
-	
-	private static final Thread spaceThread = new Thread(BigArray::optimizeSpaceLoop);
-	private static final HashSet<WeakReference<BigArray>> spaceCandidates = new HashSet<WeakReference<BigArray>>();
-	private static final BigInteger FREE_OFFSET = BigInteger.valueOf(1);
-	
-	static {
-		spaceThread.setDaemon(true);
-		spaceThread.start();
-	}
-	
-	/**
-	 * @param assetFactory
-	 */
-	public BigArray(AssetFactory assetFactory) {
-		super();
-		this.assetFactory = assetFactory;
-		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
-		depth = BigInteger.valueOf(2);
-		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), null, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, head);
-		root.left = head;
-		root.right = head.next;
-		push();
-		synchronized(spaceCandidates) { spaceCandidates.add(new WeakReference<BigArray>(this)); }
 	}
 	
 	
@@ -326,9 +341,7 @@ public class BigArray {
 		});
 	}
 	
-	// in addition to the structure lock, there can only be one push active at a time
-	private static final Object pushLock = new Object();
-	private void push() {
+	protected void push() {
 		synchronized(pushLock) {
 			for (Node active = head; active!=null; active = active.next.next) 
 				active.push();
@@ -339,7 +352,7 @@ public class BigArray {
 		}
 	}
 	
-	private void defragment() {
+	protected void defragment() {
 		for (Node active = head; active != null; active = active.next.next) 
 			active.defragment(fragmentLimit);
 	}
@@ -393,8 +406,6 @@ public class BigArray {
 		});
 	}
 
-	private static final Object spaceLock = new Object();
-	private final Set<Node> balanceQueue = Collections.synchronizedSet(new LinkedHashSet<>());
 	
 	/** While busy, keep the space optimizer awake */
 	private void spaceCheck(Node target, UUID tid) {
@@ -414,12 +425,12 @@ public class BigArray {
  		while (true) {
  			try {
 	 			Set<WeakReference<BigArray>> candidates;
-	 			synchronized(spaceCandidates) { candidates = (Set<WeakReference<BigArray>>)spaceCandidates.clone(); }
+	 			synchronized(optimizerParticipants) { candidates = (Set<WeakReference<BigArray>>)optimizerParticipants.clone(); }
 	 			boolean sleep = true;
 				for(WeakReference<BigArray> ref: candidates) {
 					BigArray b = ref.get();
 					if (b==null) {
-						synchronized(spaceCandidates) { spaceCandidates.remove(ref); }
+						synchronized(optimizerParticipants) { optimizerParticipants.remove(ref); }
 						continue;
 					}
 
@@ -448,10 +459,7 @@ public class BigArray {
 			push();
 		}
 
-		if (!balanceQueue.isEmpty())
-			spaceWalk();
-
-		return balanceQueue.isEmpty();
+		return spaceWalk();
 	};
 	
 	private void preBalance(Node node, UUID tid) {
@@ -466,65 +474,81 @@ public class BigArray {
 				largestDifference = difference;
 			}
 		}
-		if (largestDifference.abs().compareTo(FREE_OFFSET)>0) { // difference is > FREE_OFFSET
-			balanceQueue.add(winner);
+		if (largestDifference.abs().compareTo(optimizerThreshold)>0) { // difference is > FREE_OFFSET
+			spaceWalkQueue.add(winner);
 		}
 	}
 
-	/*
+	/**
 	 * Never has there been a more appropriate method name. This literally finds the high density spaces
 	 * and walks them over to the low space density area.
+	 * 
+	 * @return true if the spacewalk queue is empty
 	 */
-	private void spaceWalk() {
-		transactionally(tid->{
+	private boolean spaceWalk() {
+		return transactionally(tid->{
+			if (spaceWalkQueue.isEmpty())
+				return true;
+
 			Node node;
-			synchronized (balanceQueue) {
-				node = balanceQueue.iterator().next();
+			synchronized (spaceWalkQueue) {
+				node = spaceWalkQueue.iterator().next();
 			}
 			Node source;
 			Node destination;
 			BigInteger difference = node.left.free.subtract(node.right.free);
-			if (difference.abs().compareTo(FREE_OFFSET)<=0) {
-				balanceQueue.remove(node);
-				return;
-			} 
-			System.out.println("SPACE");
-			if (difference.compareTo(BigInteger.ZERO)<0) { // right side has more space
-				source = leftDescent(node.right, false);
-				destination = rightDescent(node.left, true);
-				for (Node n = source; n != destination; n = n.previous)
-					n.swapPrevious(tid);
-			} else { // left side has more space
-				source = rightDescent(node.left, false);
-				destination = leftDescent(node.right, true);
-				for (Node n = source; n != destination; n = n.next)
-					n.swapNext(tid);
+			if (difference.abs().compareTo(optimizerThreshold)<=0) { // difference is <= FREE_OFFSET
+				spaceWalkQueue.remove(node);
+			} else {
+				System.out.println("SPACE");
+				if (difference.compareTo(BigInteger.ZERO)<0) { 	
+					// right side has more space:
+					source = leftFreeDescent(node.right);
+					destination = rightBusyDescent(node.left);
+					for (Node n = source; n != destination; n = n.previous)
+						n.swapPrevious(tid);
+				} else { 
+					// left side has more space:
+					source = rightFreeDescent(node.left);
+					destination = leftBusyDescent(node.right);
+					for (Node n = source; n != destination; n = n.next)
+						n.swapNext(tid);
+				}
 			}
+			return spaceWalkQueue.isEmpty();
 		});
 	}
 
-	private Node rightDescent(Node node, boolean isInverted) {
+	private Node rightFreeDescent(Node node) {
 		if (node.object != null)
 			return node;
-		if 
-		(	
-			(!isInverted && node.left.free.compareTo(node.right.free)>0)||
-			(isInverted && node.left.free.compareTo(node.right.free)<0)
-		)
-			return rightDescent(node.left, isInverted);
-		return rightDescent(node.right, isInverted);
+		if (node.left.free.compareTo(node.right.free)>0)
+			return rightFreeDescent(node.left);
+		return rightFreeDescent(node.right);
+	}
+	
+	private Node rightBusyDescent(Node node) {
+		if (node.object != null)
+			return node;
+		if (node.left.free.compareTo(node.right.free)<0)
+			return rightBusyDescent(node.left);
+		return rightBusyDescent(node.right);
 	}
 
-	private Node leftDescent(Node node, boolean isInverted) {
+	private Node leftFreeDescent(Node node) {
 		if (node.object != null)
 			return node;
-		if 
-		(
-			(!isInverted && node.right.free.compareTo(node.left.free)>0)||
-			(isInverted && node.right.free.compareTo(node.left.free)<0)
-		)
-			return leftDescent(node.right, isInverted);
-		return leftDescent(node.left, isInverted);
+		if (node.right.free.compareTo(node.left.free)>0)
+			return leftFreeDescent(node.right);
+		return leftFreeDescent(node.left);
+	}
+
+	private Node leftBusyDescent(Node node) {
+		if (node.object != null)
+			return node;
+		if (node.right.free.compareTo(node.left.free)<0)
+			return leftBusyDescent(node.right);
+		return leftBusyDescent(node.left);
 	}
 	
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
