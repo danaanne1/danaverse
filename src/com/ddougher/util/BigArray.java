@@ -1,10 +1,13 @@
 package com.ddougher.util;
 
+import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.util.Deque;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
@@ -238,17 +241,27 @@ public class BigArray {
 	final int fragmentLimit = Integer.MAX_VALUE;
 
 	public void dump() {
-		StringBuilder sb = new StringBuilder();
-		sb
-			.append("HWM: " + highWatermark + "\n")
-			.append("FRE: " + root.free + "\n")
-			.append("DEP: " + depth + "\n")
-			.append("ROOT\n" +root.dump("",1))
-			.append("HEAD\n" + head.dump("",1));
-		System.out.println(sb.toString());
+		transactionally(tid->{
+			StringBuilder sb = new StringBuilder();
+			sb
+				.append("HWM: " + highWatermark + "\n")
+				.append("FRE: " + root.free + "\n")
+				.append("DEP: " + depth + "\n")
+				.append("ROOT\n" +root.dump("",1))
+				.append("HEAD\n" + head.dump("",1));
+			System.out.println(sb.toString());
+		});
 	}
 	
 	
+	private static final Thread spaceThread = new Thread(BigArray::optimizeSpaceLoop);
+	private static final HashSet<WeakReference<BigArray>> spaceCandidates = new HashSet<WeakReference<BigArray>>();
+	private static final BigInteger FREE_OFFSET = BigInteger.valueOf(1);
+	
+	static {
+		spaceThread.setDaemon(true);
+		spaceThread.start();
+	}
 	
 	/**
 	 * @param assetFactory
@@ -264,10 +277,9 @@ public class BigArray {
 		root.left = head;
 		root.right = head.next;
 		push();
-//		Thread t = new Thread(this::optimizeSpace);
-//		t.setDaemon(true);
-//		t.start();
+		synchronized(spaceCandidates) { spaceCandidates.add(new WeakReference<BigArray>(this)); }
 	}
+	
 	
 	/**
 	 * invoked anytime content structure is subject to change
@@ -377,31 +389,47 @@ public class BigArray {
 
 			freeToParents(target, BigInteger.ONE.negate());
 
-			while (true==freeBalance(target, tid));
-
-			freeSpaceCheck(target, tid);
+			spaceCheck(target, tid);
 		});
 	}
 
-	private final Object spaceLock = new Object();
-	private int freeSpaceTicker = 0;
+	private static final Object spaceLock = new Object();
+	private final Set<Node> balanceQueue = Collections.synchronizedSet(new LinkedHashSet<>());
 	
-	/** Every 100 ticks wakes up the space optimizer */
-	private void freeSpaceCheck(Node target, UUID tid) {
+	/** While busy, keep the space optimizer awake */
+	private void spaceCheck(Node target, UUID tid) {
+
+		preBalance(target, tid);
+
 		synchronized (spaceLock) {
-			if (0==(freeSpaceTicker = (freeSpaceTicker+1)%100))
-				spaceLock.notify();
+			spaceLock.notify();
 		}
 	}
 
-	@SuppressWarnings("unused")
-	private final void optimizeSpaceLoop() {
+	/*
+	 * Eventually this will get replaced with an "Optimizer" constructor parameter to allow for different pooling options.
+	 */
+	@SuppressWarnings({ "unchecked" })
+	private static final void optimizeSpaceLoop() {
  		while (true) {
-			try {
-				optimizeSpace();
+ 			try {
+	 			Set<WeakReference<BigArray>> candidates;
+	 			synchronized(spaceCandidates) { candidates = (Set<WeakReference<BigArray>>)spaceCandidates.clone(); }
+	 			boolean sleep = true;
+				for(WeakReference<BigArray> ref: candidates) {
+					BigArray b = ref.get();
+					if (b==null) {
+						synchronized(spaceCandidates) { spaceCandidates.remove(ref); }
+						continue;
+					}
 
-				synchronized (spaceLock) {
+					sleep &= b.optimizeSpace();
+
+				}
+				if (sleep) {
+					synchronized(spaceLock) {
 						spaceLock.wait(1000);
+					}
 				}
 			} catch (Exception ie) {
 				ie.printStackTrace();
@@ -410,7 +438,7 @@ public class BigArray {
 	}
 
 	// VisibleForTesting
-	protected void optimizeSpace() {
+	protected boolean optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
 		BigInteger freeSpace = root.free;
 		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
@@ -419,9 +447,14 @@ public class BigArray {
 		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
 			push();
 		}
-	};
 
-	private boolean freeBalance(Node node, UUID tid) {
+		if (!balanceQueue.isEmpty())
+			spaceWalk();
+
+		return balanceQueue.isEmpty();
+	};
+	
+	private void preBalance(Node node, UUID tid) {
 		Node current = node;
 		Node winner = current.parent;
 		BigInteger largestDifference = BigInteger.ZERO;
@@ -433,23 +466,41 @@ public class BigArray {
 				largestDifference = difference;
 			}
 		}
-		if (largestDifference.abs().compareTo(BigInteger.valueOf(1))<=0) { // difference is <= 1
-			return false;
+		if (largestDifference.abs().compareTo(FREE_OFFSET)>0) { // difference is > FREE_OFFSET
+			balanceQueue.add(winner);
 		}
-		Node source;
-		Node destination;
-		if (largestDifference.compareTo(BigInteger.ZERO)<0) { // right side has more space
-			source = leftDescent(winner.right, false);
-			destination = rightDescent(winner.left, true);
-			for (Node n = source; n != destination; n = n.previous)
-				n.swapPrevious(tid);
-		} else { // left side has more space
-			source = rightDescent(winner.left, false);
-			destination = leftDescent(winner.right, true);
-			for (Node n = source; n != destination; n = n.next)
-				n.swapNext(tid);
-		}
-		return true;
+	}
+
+	/*
+	 * Never has there been a more appropriate method name. This literally finds the high density spaces
+	 * and walks them over to the low space density area.
+	 */
+	private void spaceWalk() {
+		transactionally(tid->{
+			Node node;
+			synchronized (balanceQueue) {
+				node = balanceQueue.iterator().next();
+			}
+			Node source;
+			Node destination;
+			BigInteger difference = node.left.free.subtract(node.right.free);
+			if (difference.abs().compareTo(FREE_OFFSET)<=0) {
+				balanceQueue.remove(node);
+				return;
+			} 
+			System.out.println("SPACE");
+			if (difference.compareTo(BigInteger.ZERO)<0) { // right side has more space
+				source = leftDescent(node.right, false);
+				destination = rightDescent(node.left, true);
+				for (Node n = source; n != destination; n = n.previous)
+					n.swapPrevious(tid);
+			} else { // left side has more space
+				source = rightDescent(node.left, false);
+				destination = leftDescent(node.right, true);
+				for (Node n = source; n != destination; n = n.next)
+					n.swapNext(tid);
+			}
+		});
 	}
 
 	private Node rightDescent(Node node, boolean isInverted) {

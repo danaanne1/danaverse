@@ -55,7 +55,7 @@ class TestBigArray {
 	}
 
 	@Test
-	void test2() {
+	void test2() throws InterruptedException {
 		BigArray a = new BigArray(new MemoryAssetFactory());
 		a.dump();
 		a.insert(ByteBuffer.wrap(new byte [] { 19, 20 }), BigInteger.ZERO);
@@ -68,7 +68,7 @@ class TestBigArray {
 		a.dump();
 		a.insert(ByteBuffer.wrap(new byte [] { 1, 2, 3, 4, 5 }), BigInteger.ZERO);
 		a.dump();
-		a.optimizeSpace();
+		Thread.sleep(1000);
 		a.dump();
 	}
 
