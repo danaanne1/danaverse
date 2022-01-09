@@ -361,14 +361,14 @@ public class BigArray {
 			active.defragment(fragmentLimit);
 	}
 	
-	private Location locate(BigInteger offset, UUID atMark) {
+	private Location locate(BigInteger offset, UUID tid) {
 		Node active = root;
 		while (active.object == null) {
-			if (active.size.get(atMark).compareTo(offset) < 0) {
-				offset = offset.subtract(active.size.get(atMark));
-				active = active.right;
-			} else {
+			if (active.left.size.get(tid).compareTo(offset) >= 0) {
 				active = active.left;
+			} else {
+				offset = offset.subtract(active.left.size.get(tid));
+				active = active.right;
 			}
 		}
 		return new Location(active,offset);
@@ -382,23 +382,32 @@ public class BigArray {
 	 * @param offset
 	 * @param length
 	 */
-	public void insert(ByteBuffer data, BigInteger offset) {
+	public void insert(final ByteBuffer data, BigInteger off) {
 		int length = data.limit();
 		
 		// handle emergency push:
 		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
 			push();
 
+		final BigInteger offset = off;
 		transactionally(tid->{
 			Location l = locate(offset,tid);
-			if (!l.offset.equals(BigInteger.ZERO)) {
+			Node target = null;
+			if (l.offset.equals(BigInteger.ZERO)) {
+				// left insert
+				target = makeSpace(l.node, tid);
+			} else if (l.offset.equals(l.node.size.get(tid))) {
+				// right insert
+				target = makeSpace(l.node, tid);
+				target.swapNext(tid);
+				target = target.next;
+			} else  {
+				// split insert
 				split(l.node, l.offset.intValue() ,tid);
+				l = locate(offset,tid); // addressable may have moved post split
+				target = makeSpace(l.node, tid);
 			}
-			// the addressable may have moved post split:
-			l = locate(offset,tid);
-			
-			Node target = makeSpace(l.node, tid);
-			
+
 			// now that current node is 0, do insert:
 			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
 			// and propagate size to root:
@@ -625,6 +634,10 @@ public class BigArray {
 		freeToParents(target, BigInteger.ONE.negate());
 	}
 
+	public BigInteger size() {
+		return transactionally(tid-> { return root.size.get(tid); }  );
+	}
+	
 	public void remove(BigInteger offset, BigInteger length ) {
 		
 	}
