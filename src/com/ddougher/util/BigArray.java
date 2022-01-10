@@ -12,6 +12,7 @@ import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
@@ -299,6 +300,28 @@ public class BigArray {
 		});
 	}
 	
+	private <T> T transactionally(Supplier<T> transaction) {
+		structureLock.readLock().lock();
+		try {
+			synchronized(transactionLock) {
+				return transaction.get();
+			}
+		} finally {
+			structureLock.readLock().unlock();
+		}
+	}
+	
+	@SuppressWarnings("unused")
+	private void transactionally(Runnable transaction) {
+		structureLock.readLock().lock();
+		try {
+			synchronized(transactionLock) {
+				transaction.run();
+			}
+		} finally {
+			structureLock.readLock().unlock();
+		}
+	}
 	
 	/**
 	 * invoked anytime content structure is subject to change
@@ -632,18 +655,82 @@ public class BigArray {
 		freeToParents(target, BigInteger.ONE.negate());
 		return target;
 	}
-
+	
 	public BigInteger size() {
-		return transactionally(tid-> { return root.size.get(tid); }  );
+		return size(null);
+	}
+
+	public BigInteger size(UUID tid) {
+		return transactionally(()-> { return root.size.get(tid!=null?tid:highWatermark); }  );
 	}
 	
 	public void remove(BigInteger offset, BigInteger length ) {
-		
+		// split the two end nodes and 0 everything in between
 	}
 
-	public Iterator<Addressable> get(BigInteger offset, long length) {
+	public Iterator<ByteBuffer> get(BigInteger offset, BigInteger length) {
+		return get(offset, length, highWatermark);
+	}
+	
+	public Iterator<ByteBuffer> get(BigInteger offset, BigInteger length, UUID tid) {
 		
-		return null;
+		if (transactionally(()->{ return length.add(offset).compareTo(root.size.get(tid)); })>0)
+			throw new IndexOutOfBoundsException();
+		
+		return new Iterator<ByteBuffer>() {
+			BigInteger remainingOffset = offset;
+			BigInteger remainingLength = length;
+			ByteBuffer pending = moveToNextPiece();
+			Node lastNode = null;
+
+			@Override
+			public synchronized boolean hasNext() {
+				return pending != null;
+			}
+
+			@Override
+			public synchronized ByteBuffer next() {
+				ByteBuffer result = pending;
+				moveToNextPiece();
+				return result;
+			}
+			
+			private synchronized ByteBuffer moveToNextPiece() {
+				if (remainingLength.compareTo(BigInteger.ZERO)<=0) {
+					return null;
+				}
+				return transactionally(()->{
+					Location target = new Location(lastNode, BigInteger.ZERO);
+					if (lastNode != null && tid.equals(highWatermark)) { // shortcut if nothing has changed
+						target.node = target.node.next;
+						while (target.node != null && target.node.size.get(tid).equals(BigInteger.ZERO))
+							target.node = target.node.next;
+					} else {
+						target = locate(remainingOffset, tid);
+					}
+					if (target.offset.equals(target.node.size.get(tid))) {
+						target.node = target.node.next;
+						while (target.node != null && target.node.size.get(tid).equals(BigInteger.ZERO))
+							target.node = target.node.next;
+						target.offset = BigInteger.ZERO;
+					} 
+					if (target.node == null)
+						return null;
+					BigInteger takeLength = target.node.size.get(tid).subtract(target.offset).min(remainingLength);
+					ByteBuffer result = (ByteBuffer)target.node.object.get(tid).duplicate().position(target.offset.intValue());
+					if (result.position()!=0) 
+						result = result.slice();
+					result = (ByteBuffer)result.limit(takeLength.intValue());
+					remainingOffset = remainingOffset.add(takeLength);
+					remainingLength = remainingLength.subtract(takeLength);
+					lastNode = target.node;
+					pending = result;
+					return result;
+				});
+			}
+			
+		};
+		
 	}
 	
 	
