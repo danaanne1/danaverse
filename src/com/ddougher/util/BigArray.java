@@ -9,6 +9,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -115,7 +116,8 @@ public class BigArray {
 	private final int fragmentLimit;
 	private final BigInteger optimizerThreshold;
 	private final Set<Node> spaceWalkQueue = Collections.synchronizedSet(new LinkedHashSet<>());
-
+	private int spaceCounter = 0;
+	
 	private AssetFactory assetFactory;
 
 	private Node root; // After the first push, the root never changes
@@ -192,11 +194,11 @@ public class BigArray {
 
 		/** Adds a new layer */
 		public void push() {
-			if (object == null) 
-				throw new IllegalStateException("Push can only be called on leafs");
-			Node newParent = new Node(null, size.duplicate(), free, parent, this, null, null, null );
-			Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO ,newParent, null, null, this, next );
 			structurally(tid->{
+				if (object == null) 
+					throw new IllegalStateException("Push can only be called on leafs");
+				Node newParent = new Node(null, size.duplicate(), free, parent, this, null, null, null );
+				Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO ,newParent, null, null, this, next );
 				if (parent.left == this) {
 					parent.left = newParent;
 				} else {
@@ -288,7 +290,7 @@ public class BigArray {
 	}
 
 	public String dump() {
-		return transactionally(tid->{
+		return transactionally(()->{
 			StringBuilder sb = new StringBuilder();
 			sb
 				.append("HWM: " + highWatermark + "\n")
@@ -440,15 +442,20 @@ public class BigArray {
 		});
 	}
 
-	
+	AtomicInteger yieldCounter = new AtomicInteger(0);
 	/** While busy, keep the space optimizer awake */
 	private void spaceCheck(Node target, UUID tid) {
 
 		preBalance(target, tid);
 
 		synchronized (spaceLock) {
-			spaceLock.notify();
+			if (0==(spaceCounter=(spaceCounter+1)%200)) {
+				spaceLock.notify();
+			}
 		}
+
+		if (yieldCounter.getAndIncrement()%200==0)
+			Thread.yield();
 	}
 
 	@SuppressWarnings({ "unchecked" })
@@ -464,7 +471,6 @@ public class BigArray {
 						synchronized(optimizerParticipants) { optimizerParticipants.remove(ref); }
 						continue;
 					}
-
 					sleep &= b.optimizeSpace();
 
 				}
@@ -474,6 +480,7 @@ public class BigArray {
 					}
 				}
 			} catch (Exception ie) {
+				
 				ie.printStackTrace();
 			}
  		}
@@ -522,34 +529,34 @@ public class BigArray {
 	 */
 	protected boolean spaceWalk() {
 		return transactionally(tid->{
-			if (spaceWalkQueue.isEmpty())
-				return true;
-
-			Node node;
-			synchronized (spaceWalkQueue) {
-				node = spaceWalkQueue.iterator().next();
-			}
-			Node source;
-			Node destination;
-			BigInteger difference = node.left.free.subtract(node.right.free);
-			if (difference.abs().compareTo(optimizerThreshold)<=0) { // difference is <= FREE_OFFSET
-				spaceWalkQueue.remove(node);
-			} else {
-				if (difference.compareTo(BigInteger.ZERO)<0) { 	
-					// right side has more space:
-					source = leftFreeDescent(node.right);
-					destination = rightBusyDescent(node.left);
-					for (Node n = source; n != destination; n = n.previous)
-						n.swapPrevious(tid);
-				} else { 
-					// left side has more space:
-					source = rightFreeDescent(node.left);
-					destination = leftBusyDescent(node.right);
-					for (Node n = source; n != destination; n = n.next)
-						n.swapNext(tid);
+				if (spaceWalkQueue.isEmpty())
+					return true;
+	
+				Node node;
+				synchronized (spaceWalkQueue) {
+					node = spaceWalkQueue.iterator().next();
 				}
-			}
-			return spaceWalkQueue.isEmpty();
+				Node source = null;
+				Node destination = null;
+				BigInteger difference = node.left.free.subtract(node.right.free);
+				if (difference.abs().compareTo(optimizerThreshold)<=0) { // difference is <= FREE_OFFSET
+					spaceWalkQueue.remove(node);
+				} else {
+					if (difference.compareTo(BigInteger.ZERO)<0) { 	
+						// right side has more space:
+						source = leftFreeDescent(node.right);
+						destination = rightBusyDescent(node.left);
+						for (Node n = source; n != destination; n = n.previous)
+							n.swapPrevious(tid);
+					} else { 
+						// left side has more space:
+						source = rightFreeDescent(node.left);
+						destination = leftBusyDescent(node.right);
+						for (Node n = source; n != destination; n = n.next)
+							n.swapNext(tid);
+					}
+				}
+				return spaceWalkQueue.isEmpty();
 		});
 	}
 
@@ -587,19 +594,27 @@ public class BigArray {
 	
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
 		while (a!=b) {
-			a.size.set(a.size.get(tid).add(diffa), tid);
-			b.size.set(b.size.get(tid).add(diffb), tid);
-			a = a.parent;
-			b = b.parent;
+			if (a!=null) {
+				a.size.set(a.size.get(tid).add(diffa), tid);
+				a = a.parent;
+			}
+			if (b!=null) {
+				b.size.set(b.size.get(tid).add(diffb), tid);
+				b = b.parent;
+			}
 		}
 	}
 	
 	private void freeToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb) {
 		while (a!=b) {
-			a.free = a.free.add(diffa);
-			b.free = b.free.add(diffb);
-			a = a.parent;
-			b = b.parent;
+			if (a!=null) {
+				a.free = a.free.add(diffa);
+				a = a.parent;
+			}
+			if (b!=null) {
+				b.free = b.free.add(diffb);
+				b = b.parent;
+			}
 		}
 	}
 
@@ -665,7 +680,49 @@ public class BigArray {
 	}
 	
 	public void remove(BigInteger offset, BigInteger length ) {
-		// split the two end nodes and 0 everything in between
+		// handle emergency push:
+		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
+			push();
+
+		transactionally(tid->{
+			BigInteger lengthRemaining = length;
+			Location target = locate(offset, tid);
+			
+			// hunt off of zero / tail location
+			if (target.node.size.get(tid).equals(target.offset)) {
+				target.node = target.node.next;
+				while(target.node.size.get(tid).equals(BigInteger.ZERO))
+					target.node = target.node.next;
+				target.offset = BigInteger.ZERO;
+			}
+			
+			// handle initial split:
+			if (!target.offset.equals(BigInteger.ZERO) && target.offset.compareTo(target.node.size.get(tid))<0) {
+				target.node = split(target.node, target.offset.intValue(), tid);
+				target.offset = BigInteger.ZERO;
+			}
+			
+			// handle the full boat inbetween nodes:
+			while (target.node != null && lengthRemaining.compareTo(target.node.size.get(tid))>=0) {
+				if (!target.node.size.get(tid).equals(BigInteger.ZERO)) {
+					lengthRemaining = lengthRemaining.subtract(target.node.size.get(tid));
+					target.node.object.set(ZERO_BUFFER, tid);
+					propagateToParents(target.node, target.node.size.get(tid).negate(), tid);
+					freeToParents(target.node, BigInteger.ONE);
+				}
+				target.node = target.node.next;
+			}
+
+			// handle the tail split:
+			if (target.node != null && lengthRemaining.compareTo(BigInteger.ZERO)>0) {
+				target.node = split(target.node,lengthRemaining.intValue(),tid);
+				target.node = target.node.previous;
+				target.node.object.set(ZERO_BUFFER, tid);
+				propagateToParents(target.node, target.node.size.get(tid).negate(), tid);
+				freeToParents(target.node, BigInteger.ONE);
+			}
+		});
+		
 	}
 
 	public Iterator<ByteBuffer> get(BigInteger offset, BigInteger length) {
@@ -691,12 +748,14 @@ public class BigArray {
 			@Override
 			public synchronized ByteBuffer next() {
 				ByteBuffer result = pending;
-				moveToNextPiece();
+				if (pending != null)
+					moveToNextPiece();
 				return result;
 			}
 			
 			private synchronized ByteBuffer moveToNextPiece() {
 				if (remainingLength.compareTo(BigInteger.ZERO)<=0) {
+					pending = null;
 					return null;
 				}
 				return transactionally(()->{
@@ -708,14 +767,16 @@ public class BigArray {
 					} else {
 						target = locate(remainingOffset, tid);
 					}
-					if (target.offset.equals(target.node.size.get(tid))) {
+					if (target.offset.equals(target.node.size.get(tid))) { // this will still work if start is 0 and head is a space
 						target.node = target.node.next;
 						while (target.node != null && target.node.size.get(tid).equals(BigInteger.ZERO))
 							target.node = target.node.next;
 						target.offset = BigInteger.ZERO;
 					} 
-					if (target.node == null)
+					if (target.node == null) {
+						pending = null;
 						return null;
+					}	
 					BigInteger takeLength = target.node.size.get(tid).subtract(target.offset).min(remainingLength);
 					ByteBuffer result = (ByteBuffer)target.node.object.get(tid).duplicate().position(target.offset.intValue());
 					if (result.position()!=0) 
