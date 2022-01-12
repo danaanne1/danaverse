@@ -80,7 +80,7 @@ class TestBigArray {
 	@DisplayName("Head Loaded Space Walk Regression")
 	void test20() throws InterruptedException {
 		
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0);
 		a.insert(ByteBuffer.wrap(new byte [] { 19, 20 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 13, 14, 15, 16, 17, 18 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), BigInteger.ZERO);
@@ -116,7 +116,8 @@ class TestBigArray {
 	@DisplayName("Tail Loaded Space Walk Regression")
 	void test30() throws InterruptedException {
 		
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0);
+		
 		a.insert(ByteBuffer.wrap(new byte [] { 1, 2, 3, 4, 5 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 6, 7, 8, 9 }), a.size());
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), a.size());
@@ -177,7 +178,7 @@ class TestBigArray {
 	@Test
 	@DisplayName("Defragment Min Threshold Regression") 
 	void test40() {
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, 0);
 		a.insert(ByteBuffer.wrap(new byte [] { 19, 20 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 13, 14, 15, 16, 17, 18 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), BigInteger.ZERO);
@@ -211,7 +212,7 @@ class TestBigArray {
 	@Test
 	@DisplayName("Defragment Max Threshold Regression") 
 	void test50() {
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE);
 		a.insert(ByteBuffer.wrap(new byte [] { 19, 20 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 13, 14, 15, 16, 17, 18 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), BigInteger.ZERO);
@@ -245,7 +246,7 @@ class TestBigArray {
 	@Test
 	@DisplayName("Split Insert Regression")
 	void test60() {
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE);
 		a.insert(ByteBuffer.wrap(new byte [] { 0, 2, 3, 4, 5 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 6, 7, 8, 9 }), a.size());
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), a.size());
@@ -367,7 +368,7 @@ class TestBigArray {
 	}
 
 	public BigArray standardTestArray() {
-		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE, BigInteger.ONE);
+		BigArray a = new BigArray(new MemoryAssetFactory(), p->{}, Integer.MAX_VALUE);
 		a.insert(ByteBuffer.wrap(new byte [] { 0, 2, 3, 4, 5 }), BigInteger.ZERO);
 		a.insert(ByteBuffer.wrap(new byte [] { 6, 7, 8, 9 }), a.size());
 		a.insert(ByteBuffer.wrap(new byte [] { 10, 11, 12 }), a.size());
@@ -631,9 +632,15 @@ class TestBigArray {
 	{
 		Random r = new Random();
 		BigArray a = null;
-		a = new BigArray(new MemoryAssetFactory(), BigArray.defaultOptimizer, 0, BigInteger.valueOf(4) );
-		for (int i = 0; i < 2000; i++) {
-			a.insert(ByteBuffer.wrap(new byte [] { (byte)i }), BigInteger.valueOf(r.nextInt(a.size().intValue()+1)));
+		for(long j : new long [] {2000, 4000, 6000, 8000, 8000, 8000, 10000, 40000 }) {
+			long time = System.currentTimeMillis();
+			a = new BigArray(new MemoryAssetFactory(), BigArray.defaultOptimizer, 0 );
+			for (int i = 0; i < j; i++) {
+				a.insert(ByteBuffer.wrap(new byte [] { (byte)i }), BigInteger.valueOf(r.nextInt(a.size().intValue()+1)));
+			}
+			System.out.println("--------------------------------------------------------------");
+			System.out.println(System.currentTimeMillis()-time);
+			a.dumpMetrics();
 		}
 		//System.out.println(a.dump());
 	}

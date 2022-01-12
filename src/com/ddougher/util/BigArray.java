@@ -3,13 +3,19 @@ package com.ddougher.util;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -58,6 +64,46 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  */
 public class BigArray {
 
+	public ConcurrentHashMap<String, AtomicLong> metrics = new ConcurrentHashMap<String, AtomicLong>();
+	
+	private <T> T withMetric(String baseName, Supplier<T> action) {
+		long timestamp = System.nanoTime();
+		T result = action.get();
+		getMetric(baseName+".Time").addAndGet(System.nanoTime()-timestamp);
+		getMetric(baseName+".Count").addAndGet(1);
+		return result;
+	};
+	
+	private void withMetric(String baseName, Runnable action) {
+		withMetric(baseName, () -> {
+			action.run();
+			return null;
+		});
+	}
+	
+	public void dumpMetrics() {
+		ArrayList<String> al = new ArrayList<String>();
+		metrics.keySet().forEach(al::add);
+		Collections.sort(al);
+		al.forEach(k->{
+			if (k.endsWith(".Time")) {
+				System.out.println(k + " : " + ((double)metrics.get(k).get())/1000000);
+				System.out.println(k.replace(".Time", ".Avg") + " : " + ((double)(metrics.get(k).get()/metrics.get(k.replace(".Time", ".Count")).get()))/1000000);
+			} else {
+				System.out.println(k + " : " + metrics.get(k).get());
+			}
+		});
+	}
+	
+	private AtomicLong getMetric(String metricName) {
+		AtomicLong l = metrics.get(metricName);
+		if (l == null) {
+			metrics.putIfAbsent(metricName, new AtomicLong());
+			l = metrics.get(metricName);
+		}
+		return l;
+	}
+	
 	public interface Optimizer {
 		void addParticipant(BigArray participant);
 	}
@@ -100,8 +146,7 @@ public class BigArray {
 	private static final Thread optimizerThread = new Thread(BigArray::optimizeSpaceLoop);
 	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
 
-	public static final BigInteger defaultOptimizerThreshold = BigInteger.valueOf(2);
-	public static final int defaultFragmentLimit = Integer.MAX_VALUE;
+	public static final int defaultFragmentLimit = 0;
 	public static final Optimizer defaultOptimizer = p -> { synchronized(optimizerParticipants) { optimizerParticipants.add(new WeakReference<BigArray>(p)); } };
 
 	static {
@@ -114,9 +159,6 @@ public class BigArray {
 	private final Object transactionLock = new Object();
 	private final Object pushLock = new Object();
 	private final int fragmentLimit;
-	private final BigInteger optimizerThreshold;
-	private final Set<Node> spaceWalkQueue = Collections.synchronizedSet(new LinkedHashSet<>());
-	private int spaceCounter = 0;
 	
 	private AssetFactory assetFactory;
 
@@ -127,11 +169,10 @@ public class BigArray {
 	private volatile UUID highWatermark;
 	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 
-	public BigArray(AssetFactory assetFactory, Optimizer optimizer, int fragmentLimit, BigInteger optimizerThreshold) {
+	public BigArray(AssetFactory assetFactory, Optimizer optimizer, int fragmentLimit) {
 		super();
 		this.assetFactory = assetFactory;
 		this.fragmentLimit = fragmentLimit;
-		this.optimizerThreshold = optimizerThreshold;
 		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
 		depth = BigInteger.valueOf(2);
 		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), null, null, null, null, null);
@@ -144,7 +185,7 @@ public class BigArray {
 	}
 	
 	public BigArray(AssetFactory assetFactory) {
-		this(assetFactory, defaultOptimizer, defaultFragmentLimit, defaultOptimizerThreshold);
+		this(assetFactory, defaultOptimizer, defaultFragmentLimit);
 	}
 
 	
@@ -193,8 +234,8 @@ public class BigArray {
 		}
 
 		/** Adds a new layer */
-		public void push() {
-			structurally(tid->{
+		public void push(UUID tid) {
+			withMetric( "Node.Push", () -> {
 				if (object == null) 
 					throw new IllegalStateException("Push can only be called on leafs");
 				Node newParent = new Node(null, size.duplicate(), free, parent, this, null, null, null );
@@ -215,114 +256,132 @@ public class BigArray {
 		
 		/** Defragment's by appending and zeroing the next (if it would be under sizeLimit) */
 		public boolean defragment(int sizeLimit) {
-			if (object == null) 
-				throw new IllegalStateException("Defrag can only be called on leafs");
-			if (next == null)
-				throw new IllegalStateException("Should not be called on tail node");
-			return transactionally(tid->{
-				if (next.object.size(tid)==0) 
-					return false;
-				if ((next.object.size(tid) + object.size(tid)) <= sizeLimit ) {
-					BigInteger difference = next.size.get(tid);
-					object.append(next.object, tid);
-					next.object.set(ZERO_BUFFER, tid);
-					propagateToCommon(this, next, difference, difference.negate(), tid);
-					freeToParents(next, BigInteger.ONE);
-					return true;
-				}
-				return false;
-			});
+				if (object == null) 
+					throw new IllegalStateException("Defrag can only be called on leafs");
+				if (next == null)
+					throw new IllegalStateException("Should not be called on tail node");
+				return transactionally(tid->{
+					return withMetric( "Node.Defragment", () -> {
+						if (size.get(tid).equals(BigInteger.ZERO)||next.size.get(tid).equals(BigInteger.ZERO)) 
+							return false;
+						if (next.size.get(tid).longValue() + size.get(tid).longValue() <= sizeLimit ) {
+							BigInteger difference = next.size.get(tid);
+							object.append(next.object, tid);
+							next.object.set(ZERO_BUFFER, tid);
+							propagateToCommon(this, next, difference, difference.negate(), tid);
+							freeToParents(next, BigInteger.ONE);
+							return true;
+						}
+						return false;
+					});
+				});
 		}
 		
 		public void swapPrevious(UUID tid) {
-			previous.object.swap(object, tid);
-
-			if (previous.size.get(tid).equals(BigInteger.ZERO)) 
-				freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			if (size.get(tid).equals(BigInteger.ZERO))
-				freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
-
-			BigInteger difference = previous.size.get(tid).subtract(size.get(tid));
-			propagateToCommon(previous, this, difference.negate(), difference, tid);
+			withMetric( "Node.SwapPrevious", () -> {
+				previous.object.swap(object, tid);
+	
+				if (previous.size.get(tid).equals(BigInteger.ZERO)) 
+					freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
+				if (size.get(tid).equals(BigInteger.ZERO))
+					freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
+	
+				BigInteger difference = previous.size.get(tid).subtract(size.get(tid));
+				propagateToCommon(previous, this, difference.negate(), difference, tid);
+			});
 		}
 		
 		public void swapNext(UUID tid) {
-			next.object.swap(object, tid);
-
-			if (next.size.get(tid).equals(BigInteger.ZERO)) 
-				freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
-			if (size.get(tid).equals(BigInteger.ZERO))
-				freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
-
-			BigInteger difference = next.size.get(tid).subtract(size.get(tid));
-			propagateToCommon(next, this, difference.negate(), difference, tid);
+			withMetric( "Node.SwapNext", () -> {
+				next.object.swap(object, tid);
+	
+				if (next.size.get(tid).equals(BigInteger.ZERO)) 
+					freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
+				if (size.get(tid).equals(BigInteger.ZERO))
+					freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
+	
+				BigInteger difference = next.size.get(tid).subtract(size.get(tid));
+				propagateToCommon(next, this, difference.negate(), difference, tid);
+			});
 		}
 		
 		public String dump(String prefix, int depth) {
-			StringBuilder sb = new StringBuilder();
-			for (int i = 0; i < depth; i++)
-				sb.append("    ");
-			String space = sb.toString();
-			sb = new StringBuilder();
-			sb
-				.append(space+prefix+id)
-				.append(" { ")
-				.append("s: "+size.get(highWatermark))
-				.append(", ")
-				.append("f: "+free)
-				.append(", ")
-				.append("p: "+(previous!=null?previous.id:"-"))
-				.append(", ")
-				.append("n: "+(next!=null?next.id:"-"))
-				.append(", ")
-				.append("u: "+(parent!=null?parent.id:"-"))
-				.append(", ")
-				.append("o: "+object)
-				.append("}\n");
-			
-			if (left != null)
-				sb.append(left.dump("L: ",depth+1));
-			if (right != null)
-				sb.append(right.dump("R: ",depth+1));
-			
-			return sb.toString();
+			return withMetric( "Node.Dump", () -> {
+				StringBuilder sb = new StringBuilder();
+				for (int i = 0; i < depth; i++)
+					sb.append("    ");
+				String space = sb.toString();
+				sb = new StringBuilder();
+				sb
+					.append(space+prefix+id)
+					.append(" { ")
+					.append("s: "+size.get(highWatermark))
+					.append(", ")
+					.append("f: "+free)
+					.append(", ")
+					.append("p: "+(previous!=null?previous.id:"-"))
+					.append(", ")
+					.append("n: "+(next!=null?next.id:"-"))
+					.append(", ")
+					.append("u: "+(parent!=null?parent.id:"-"))
+					.append(", ")
+					.append("o: "+object)
+					.append("}\n");
+				
+				if (left != null)
+					sb.append(left.dump("L: ",depth+1));
+				if (right != null)
+					sb.append(right.dump("R: ",depth+1));
+				
+				return sb.toString();
+			});
 		}	
 	}
 
 	public String dump() {
 		return transactionally(()->{
-			StringBuilder sb = new StringBuilder();
-			sb
-				.append("HWM: " + highWatermark + "\n")
-				.append("FRE: " + root.free + "\n")
-				.append("DEP: " + depth + "\n")
-				.append("ROOT\n" +root.dump("",1))
-				.append("HEAD\n" + head.dump("",1));
-			return sb.toString();
+			return withMetric("BigArray.Dump", () -> {
+				StringBuilder sb = new StringBuilder();
+				sb
+					.append("HWM: " + highWatermark + "\n")
+					.append("FRE: " + root.free + "\n")
+					.append("DEP: " + depth + "\n")
+					.append("ROOT\n" +root.dump("",1))
+					.append("HEAD\n" + head.dump("",1));
+				return sb.toString();
+			});
 		});
 	}
 	
+	private LinkedHashMap<String,Runnable> postTransactionOperations = new LinkedHashMap<>();
+	
 	private <T> T transactionally(Supplier<T> transaction) {
-		structureLock.readLock().lock();
-		try {
-			synchronized(transactionLock) {
-				return transaction.get();
+		return withMetric("BigArray.Transaction.Outter", () -> {
+			LinkedList<Runnable> pops = new LinkedList<Runnable>();
+			structureLock.readLock().lock();
+			AtomicReference<T> ref = new AtomicReference<T>();
+			try {
+				synchronized(transactionLock) {
+					withMetric("BigArray.Transaction.Inner", () -> {
+						ref.set(transaction.get());
+					});
+					pops.addAll(postTransactionOperations.values());
+					postTransactionOperations.clear();
+				}
+			} finally {
+				structureLock.readLock().unlock();
 			}
-		} finally {
-			structureLock.readLock().unlock();
-		}
+			pops.forEach(a->a.run());
+			return ref.get();
+		});
 	}
 	
 	@SuppressWarnings("unused")
 	private void transactionally(Runnable transaction) {
-		structureLock.readLock().lock();
-		try {
-			synchronized(transactionLock) {
-				transaction.run();
-			}
-		} finally {
-			structureLock.readLock().unlock();
-		}
+		transactionally(()->{
+			transaction.run();
+			return null;
+		});
 	}
 	
 	/**
@@ -330,18 +389,13 @@ public class BigArray {
 	 * @param transaction
 	 */
 	private <T> T transactionally(Function<UUID, T> transaction) {
-		structureLock.readLock().lock();
-		try {
-			synchronized(transactionLock) {
-				UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
-				T result = transaction.apply(transactionId);
-				highWatermark = transactionId;
-				return result;
-			}
-		} finally {
-			structureLock.readLock().unlock();
-		}
-	}
+		return transactionally(() -> {
+			UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
+			T result = transaction.apply(transactionId);
+			highWatermark = transactionId;
+			return result;
+		});
+	}			
 	
 	private void transactionally(Consumer<UUID> transaction) {
 		transactionally(tid->{
@@ -355,12 +409,16 @@ public class BigArray {
 	 * @param transaction
 	 */
 	private <T> T structurally(Function<UUID, T> transaction) {
-		structureLock.writeLock().lock();
-		try {
-			return transactionally(transaction);
-		} finally {
-			structureLock.writeLock().unlock();
-		}
+		return withMetric("BigArray.Structurally.Outter", () -> {
+			structureLock.writeLock().lock();
+			try {
+				return withMetric("BigArray.Structurally.Inner", () -> {
+					return transactionally(transaction);
+				});
+			} finally {
+				structureLock.writeLock().unlock();
+			}
+		});
 	}
 	
 	private void structurally(Consumer<UUID> transaction) {
@@ -372,31 +430,39 @@ public class BigArray {
 	
 	protected void push() {
 		synchronized(pushLock) {
-			for (Node active = head; active!=null; active = active.next.next) 
-				active.push();
-			transactionally(tid->{
-				depth = depth.add(BigInteger.ONE);
-				return null;
+			structurally(tid->{
+				withMetric("BigArray.Push", () -> {
+					for (Node active = head; active!=null; active = active.next.next) 
+						active.push(tid);
+					depth = depth.add(BigInteger.ONE);
+				});
 			});
 		}
 	}
 	
 	protected void defragment() {
-		for (Node active = head; active != null; active = active.next.next) 
-			active.defragment(fragmentLimit);
+		withMetric("BigArray.Defragment", () -> {
+			if (fragmentLimit == 0)
+				return;
+			for (Node active = head; active != null; active = active.next.next) 
+				active.defragment(fragmentLimit);
+		});
 	}
 	
-	private Location locate(BigInteger offset, UUID tid) {
-		Node active = root;
-		while (active.object == null) {
-			if (active.left.size.get(tid).compareTo(offset) >= 0) {
-				active = active.left;
-			} else {
-				offset = offset.subtract(active.left.size.get(tid));
-				active = active.right;
+	private Location locate(BigInteger off, UUID tid) {
+		return withMetric("BigArray.Locate", () -> {
+			Node active = root;
+			BigInteger offset = off;
+			while (active.object == null) {
+				if (active.left.size.get(tid).compareTo(offset) >= 0) {
+					active = active.left;
+				} else {
+					offset = offset.subtract(active.left.size.get(tid));
+					active = active.right;
+				}
 			}
-		}
-		return new Location(active,offset);
+			return new Location(active,offset);
+		});
 	}
 	
 	/**
@@ -407,55 +473,49 @@ public class BigArray {
 	 * @param offset
 	 * @param length
 	 */
-	public void insert(final ByteBuffer data, BigInteger off) {
+	public void insert(final ByteBuffer data, BigInteger offset) {
 		int length = data.limit();
 		
 		// handle emergency push:
 		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
 			push();
 
-		final BigInteger offset = off;
 		transactionally(tid->{
-			Location l = locate(offset,tid);
-			Node target = null;
-			if (l.offset.equals(BigInteger.ZERO)) {
-				// left insert
-				target = makeSpace(l.node, tid);
-			} else if (l.offset.equals(l.node.size.get(tid))) {
-				// tail insert steals space 
-				target = makeSpace(l.node, tid);
-				target.swapNext(tid);
-				target = target.next;
-			} else  {
-				// split insert
-				target = makeSpace(split(l.node, l.offset.intValue() ,tid), tid);
-			}
-
-			// target is now a 0 in the appropriate position:
-			target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
-
-			propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
-
-			freeToParents(target, BigInteger.ONE.negate());
-
-			spaceCheck(target, tid);
+			withMetric("BigArray.insert", () -> {
+				Location l = locate(offset,tid);
+				Node target = null;
+				if (l.offset.equals(BigInteger.ZERO)) {
+					// left insert
+					target = makeSpace(l.node, tid);
+				} else if (l.offset.equals(l.node.size.get(tid))) {
+					// tail insert steals space 
+					target = makeSpace(l.node, tid);
+					target.swapNext(tid);
+					target = target.next;
+				} else  {
+					// split insert
+					target = makeSpace(split(l.node, l.offset.intValue() ,tid), tid);
+				}
+	
+				// target is now a 0 in the appropriate position:
+				target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
+	
+				propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
+	
+				freeToParents(target, BigInteger.ONE.negate());
+	
+				spaceCheck(target, tid);
+			});
 		});
 	}
 
-	AtomicInteger yieldCounter = new AtomicInteger(0);
 	/** While busy, keep the space optimizer awake */
 	private void spaceCheck(Node target, UUID tid) {
-
-		preBalance(target, tid);
-
-		synchronized (spaceLock) {
-			if (0==(spaceCounter=(spaceCounter+1)%200)) {
+		withMetric("BigArray.SpaceCheck", () -> {
+			synchronized (spaceLock) {
 				spaceLock.notify();
 			}
-		}
-
-		if (yieldCounter.getAndIncrement()%200==0)
-			Thread.yield();
+		});
 	}
 
 	@SuppressWarnings({ "unchecked" })
@@ -485,6 +545,14 @@ public class BigArray {
 			}
  		}
 	}
+	
+	private volatile boolean forceOptimizeFlag = false;
+	
+	private void forceOptimize() {
+		if (forceOptimizeFlag) return;
+		forceOptimizeFlag = true;
+		postTransactionOperations.put("forceOptimize", () -> { optimizeSpace(); });
+	}
 
 	/**
 	 * Runs full space optimization: Defragment, followed by push, followed by a spacewalk.
@@ -493,33 +561,20 @@ public class BigArray {
 	 */
 	protected boolean optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
-		BigInteger freeSpace = root.free;
-		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-			defragment();
-		}
-		if (freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-			push();
-		}
-
-		return spaceWalk();
+		return withMetric("BigArray.OptimizeSpace", () -> {
+			BigInteger freeSpace = root.free;
+			if (forceOptimizeFlag || freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+				defragment();
+			}
+			if (forceOptimizeFlag || freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
+				push();
+			}
+			forceOptimizeFlag = false;
+			
+			return spaceWalk();
+		});
 	};
 	
-	private void preBalance(Node node, UUID tid) {
-		Node current = node;
-		Node winner = current.parent;
-		BigInteger largestDifference = BigInteger.ZERO;
-		while (current.parent != null) {
-			current = current.parent;
-			BigInteger difference = current.left.free.subtract(current.right.free);
-			if (difference.abs().compareTo(largestDifference.abs()) > 0) {
-				winner = current;
-				largestDifference = difference;
-			}
-		}
-		if (largestDifference.abs().compareTo(optimizerThreshold)>0) { // difference is > FREE_OFFSET
-			spaceWalkQueue.add(winner);
-		}
-	}
 
 	/**
 	 * Never has there been a more appropriate method name. This literally finds the high density spaces
@@ -529,69 +584,12 @@ public class BigArray {
 	 */
 	protected boolean spaceWalk() {
 		return transactionally(tid->{
-				if (spaceWalkQueue.isEmpty())
-					return true;
-	
-				Node node;
-				synchronized (spaceWalkQueue) {
-					node = spaceWalkQueue.iterator().next();
-				}
-				Node source = null;
-				Node destination = null;
-				BigInteger difference = node.left.free.subtract(node.right.free);
-				if (difference.abs().compareTo(optimizerThreshold)<=0) { // difference is <= FREE_OFFSET
-					spaceWalkQueue.remove(node);
-				} else {
-					if (difference.compareTo(BigInteger.ZERO)<0) { 	
-						// right side has more space:
-						source = leftFreeDescent(node.right);
-						destination = rightBusyDescent(node.left);
-						for (Node n = source; n != destination; n = n.previous)
-							n.swapPrevious(tid);
-					} else { 
-						// left side has more space:
-						source = rightFreeDescent(node.left);
-						destination = leftBusyDescent(node.right);
-						for (Node n = source; n != destination; n = n.next)
-							n.swapNext(tid);
-					}
-				}
-				return spaceWalkQueue.isEmpty();
+			return withMetric("BigArray.SpaceWalk", () -> {
+				return false;
+			});
 		});
 	}
 
-	private Node rightFreeDescent(Node node) {
-		if (node.object != null)
-			return node;
-		if (node.left.free.compareTo(node.right.free)>0)
-			return rightFreeDescent(node.left);
-		return rightFreeDescent(node.right);
-	}
-	
-	private Node rightBusyDescent(Node node) {
-		if (node.object != null)
-			return node;
-		if (node.left.free.compareTo(node.right.free)<0)
-			return rightBusyDescent(node.left);
-		return rightBusyDescent(node.right);
-	}
-
-	private Node leftFreeDescent(Node node) {
-		if (node.object != null)
-			return node;
-		if (node.right.free.compareTo(node.left.free)>0)
-			return leftFreeDescent(node.right);
-		return leftFreeDescent(node.left);
-	}
-
-	private Node leftBusyDescent(Node node) {
-		if (node.object != null)
-			return node;
-		if (node.right.free.compareTo(node.left.free)<0)
-			return leftBusyDescent(node.right);
-		return leftBusyDescent(node.left);
-	}
-	
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
 		while (a!=b) {
 			if (a!=null) {
@@ -640,19 +638,26 @@ public class BigArray {
 		}
 		
 		// this actually bubbles backwards from the found node until the current node (or its previous) is a zero 
+		long distance = 0;
+		Node result;
 		if (forwards.size.get(tid).equals(BigInteger.ZERO)) {
 			while (forwards != active) {
 				forwards.swapPrevious(tid);
 				forwards = forwards.previous;
+				distance += 1;
 			}
-			return forwards;
+			result = forwards;
 		} else {
 			while (backwards.next != active) {
 				backwards.swapNext(tid);
 				backwards = backwards.next;
+				distance += 1;
 			}
-			return backwards;
+			result =  backwards;
 		}
+		if (distance > 20) 
+			forceOptimize();
+		return result;
 	}
 
 	private Node split(Node node, int offset, UUID tid) {
