@@ -8,12 +8,10 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -103,10 +101,6 @@ public class BigArray {
 		}
 		return l;
 	}
-	
-	public interface Optimizer {
-		void addParticipant(BigArray participant);
-	}
 
 	public interface AssetFactory {
 		Addressable createAddressable();
@@ -141,13 +135,10 @@ public class BigArray {
 		Addressable slice(int offset, UUID mark);
 	}
 
-	private static final HashSet<WeakReference<BigArray>> optimizerParticipants = new HashSet<WeakReference<BigArray>>();
-	private static final Object spaceLock = new Object();
-	private static final Thread optimizerThread = new Thread(BigArray::optimizeSpaceLoop);
+	private static final Thread optimizerThread = new Thread(BigArray::optimizerLoop);
 	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
 
 	public static final int defaultFragmentLimit = 0;
-	public static final Optimizer defaultOptimizer = p -> { synchronized(optimizerParticipants) { optimizerParticipants.add(new WeakReference<BigArray>(p)); } };
 
 	static {
 		optimizerThread.setDaemon(true);
@@ -157,7 +148,6 @@ public class BigArray {
 	
 	private final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
 	private final Object transactionLock = new Object();
-	private final Object pushLock = new Object();
 	private final int fragmentLimit;
 	
 	private AssetFactory assetFactory;
@@ -169,23 +159,15 @@ public class BigArray {
 	private volatile UUID highWatermark;
 	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 
-	public BigArray(AssetFactory assetFactory, Optimizer optimizer, int fragmentLimit) {
+	public BigArray(AssetFactory assetFactory, int fragmentLimit) {
 		super();
 		this.assetFactory = assetFactory;
 		this.fragmentLimit = fragmentLimit;
 		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
-		depth = BigInteger.valueOf(2);
-		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), null, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, null);
-		head = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, root, null, null, null, head);
-		root.left = head;
-		root.right = head.next;
-		push();
-		optimizer.addParticipant(this); 
 	}
 	
 	public BigArray(AssetFactory assetFactory) {
-		this(assetFactory, defaultOptimizer, defaultFragmentLimit);
+		this(assetFactory, defaultFragmentLimit);
 	}
 
 	
@@ -428,26 +410,6 @@ public class BigArray {
 		});
 	}
 	
-	protected void push() {
-		synchronized(pushLock) {
-			structurally(tid->{
-				withMetric("BigArray.Push", () -> {
-					for (Node active = head; active!=null; active = active.next.next) 
-						active.push(tid);
-					depth = depth.add(BigInteger.ONE);
-				});
-			});
-		}
-	}
-	
-	protected void defragment() {
-		withMetric("BigArray.Defragment", () -> {
-			if (fragmentLimit == 0)
-				return;
-			for (Node active = head; active != null; active = active.next.next) 
-				active.defragment(fragmentLimit);
-		});
-	}
 	
 	private Location locate(BigInteger off, UUID tid) {
 		return withMetric("BigArray.Locate", () -> {
@@ -476,74 +438,10 @@ public class BigArray {
 	public void insert(final ByteBuffer data, BigInteger offset) {
 		int length = data.limit();
 		
-		// handle emergency push:
-		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
-			push();
-
-		transactionally(tid->{
-			withMetric("BigArray.insert", () -> {
-				Location l = locate(offset,tid);
-				Node target = null;
-				if (l.offset.equals(BigInteger.ZERO)) {
-					// left insert
-					target = makeSpace(l.node, tid);
-				} else if (l.offset.equals(l.node.size.get(tid))) {
-					// tail insert steals space 
-					target = makeSpace(l.node, tid);
-					target.swapNext(tid);
-					target = target.next;
-				} else  {
-					// split insert
-					target = makeSpace(split(l.node, l.offset.intValue() ,tid), tid);
-				}
-	
-				// target is now a 0 in the appropriate position:
-				target.object.set((ByteBuffer)data.duplicate().position(length).flip(), tid);
-	
-				propagateToParents(target, BigInteger.valueOf(length).subtract(target.size.get(tid)), tid);
-	
-				freeToParents(target, BigInteger.ONE.negate());
-	
-				spaceCheck(target, tid);
-			});
-		});
-	}
-
-	/** While busy, keep the space optimizer awake */
-	private void spaceCheck(Node target, UUID tid) {
-		withMetric("BigArray.SpaceCheck", () -> {
-			synchronized (spaceLock) {
-				spaceLock.notify();
-			}
-		});
 	}
 
 	@SuppressWarnings({ "unchecked" })
-	private static final void optimizeSpaceLoop() {
- 		while (true) {
- 			try {
-	 			Set<WeakReference<BigArray>> candidates;
-	 			synchronized(optimizerParticipants) { candidates = (Set<WeakReference<BigArray>>)optimizerParticipants.clone(); }
-	 			boolean sleep = true;
-				for(WeakReference<BigArray> ref: candidates) {
-					BigArray b = ref.get();
-					if (b==null) {
-						synchronized(optimizerParticipants) { optimizerParticipants.remove(ref); }
-						continue;
-					}
-					sleep &= b.optimizeSpace();
-
-				}
-				if (sleep) {
-					synchronized(spaceLock) {
-						spaceLock.wait(1000);
-					}
-				}
-			} catch (Exception ie) {
-				
-				ie.printStackTrace();
-			}
- 		}
+	private static final void optimizerLoop() {
 	}
 	
 	private volatile boolean forceOptimizeFlag = false;
@@ -562,34 +460,10 @@ public class BigArray {
 	protected boolean optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
 		return withMetric("BigArray.OptimizeSpace", () -> {
-			BigInteger freeSpace = root.free;
-			if (forceOptimizeFlag || freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-				defragment();
-			}
-			if (forceOptimizeFlag || freeSpace.compareTo(BigInteger.ONE) <= 0 || BigInteger.valueOf(2).pow(depth.intValue()-1).divide(freeSpace).compareTo(BigInteger.valueOf(10))>0) {
-				push();
-			}
-			forceOptimizeFlag = false;
-			
-			return spaceWalk();
+			return false;
 		});
 	};
 	
-
-	/**
-	 * Never has there been a more appropriate method name. This literally finds the high density spaces
-	 * and walks them over to the low space density area.
-	 * 
-	 * @return true if the spacewalk queue is empty
-	 */
-	protected boolean spaceWalk() {
-		return transactionally(tid->{
-			return withMetric("BigArray.SpaceWalk", () -> {
-				return false;
-			});
-		});
-	}
-
 	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
 		while (a!=b) {
 			if (a!=null) {
@@ -626,55 +500,6 @@ public class BigArray {
 			target.free = target.free.add(difference);
 	}
 	
-	private Node makeSpace( Node active, UUID tid) {
-		// find the closest space
-		Node forwards = active;
-		Node backwards = active;
-		while (!forwards.size.get(tid).equals(BigInteger.ZERO) && !backwards.size.get(tid).equals(BigInteger.ZERO)) {
-			if (forwards.next!=null)
-				forwards = forwards.next;
-			if (backwards.previous!=null)
-				backwards = backwards.previous;
-		}
-		
-		// this actually bubbles backwards from the found node until the current node (or its previous) is a zero 
-		long distance = 0;
-		Node result;
-		if (forwards.size.get(tid).equals(BigInteger.ZERO)) {
-			while (forwards != active) {
-				forwards.swapPrevious(tid);
-				forwards = forwards.previous;
-				distance += 1;
-			}
-			result = forwards;
-		} else {
-			while (backwards.next != active) {
-				backwards.swapNext(tid);
-				backwards = backwards.next;
-				distance += 1;
-			}
-			result =  backwards;
-		}
-		if (distance > 20) 
-			forceOptimize();
-		return result;
-	}
-
-	private Node split(Node node, int offset, UUID tid) {
-		Addressable slice = node.object.slice(offset, tid);
-		node.object.resize(offset, tid);
-		BigInteger difference = BigInteger.valueOf(offset).subtract(node.size.get(tid));
-		propagateToParents(node, difference, tid);
-		
-		
-		Node target = makeSpace(node, tid);
-		target.swapNext(tid); //move the space to the right
-		target = target.next;
-		target.object.set(slice, tid);
-		propagateToParents(target, difference.negate(), tid);
-		freeToParents(target, BigInteger.ONE.negate());
-		return target;
-	}
 	
 	public BigInteger size() {
 		return size(null);
@@ -685,49 +510,6 @@ public class BigArray {
 	}
 	
 	public void remove(BigInteger offset, BigInteger length ) {
-		// handle emergency push:
-		if (root.free.compareTo(BigInteger.valueOf(2))<=0)
-			push();
-
-		transactionally(tid->{
-			BigInteger lengthRemaining = length;
-			Location target = locate(offset, tid);
-			
-			// hunt off of zero / tail location
-			if (target.node.size.get(tid).equals(target.offset)) {
-				target.node = target.node.next;
-				while(target.node.size.get(tid).equals(BigInteger.ZERO))
-					target.node = target.node.next;
-				target.offset = BigInteger.ZERO;
-			}
-			
-			// handle initial split:
-			if (!target.offset.equals(BigInteger.ZERO) && target.offset.compareTo(target.node.size.get(tid))<0) {
-				target.node = split(target.node, target.offset.intValue(), tid);
-				target.offset = BigInteger.ZERO;
-			}
-			
-			// handle the full boat inbetween nodes:
-			while (target.node != null && lengthRemaining.compareTo(target.node.size.get(tid))>=0) {
-				if (!target.node.size.get(tid).equals(BigInteger.ZERO)) {
-					lengthRemaining = lengthRemaining.subtract(target.node.size.get(tid));
-					target.node.object.set(ZERO_BUFFER, tid);
-					propagateToParents(target.node, target.node.size.get(tid).negate(), tid);
-					freeToParents(target.node, BigInteger.ONE);
-				}
-				target.node = target.node.next;
-			}
-
-			// handle the tail split:
-			if (target.node != null && lengthRemaining.compareTo(BigInteger.ZERO)>0) {
-				target.node = split(target.node,lengthRemaining.intValue(),tid);
-				target.node = target.node.previous;
-				target.node.object.set(ZERO_BUFFER, tid);
-				propagateToParents(target.node, target.node.size.get(tid).negate(), tid);
-				freeToParents(target.node, BigInteger.ONE);
-			}
-		});
-		
 	}
 
 	public Iterator<ByteBuffer> get(BigInteger offset, BigInteger length) {
@@ -735,68 +517,7 @@ public class BigArray {
 	}
 	
 	public Iterator<ByteBuffer> get(BigInteger offset, BigInteger length, UUID tid) {
-		
-		if (transactionally(()->{ return length.add(offset).compareTo(root.size.get(tid)); })>0)
-			throw new IndexOutOfBoundsException();
-		
-		return new Iterator<ByteBuffer>() {
-			BigInteger remainingOffset = offset;
-			BigInteger remainingLength = length;
-			ByteBuffer pending = moveToNextPiece();
-			Node lastNode = null;
-
-			@Override
-			public synchronized boolean hasNext() {
-				return pending != null;
-			}
-
-			@Override
-			public synchronized ByteBuffer next() {
-				ByteBuffer result = pending;
-				if (pending != null)
-					moveToNextPiece();
-				return result;
-			}
-			
-			private synchronized ByteBuffer moveToNextPiece() {
-				if (remainingLength.compareTo(BigInteger.ZERO)<=0) {
-					pending = null;
-					return null;
-				}
-				return transactionally(()->{
-					Location target = new Location(lastNode, BigInteger.ZERO);
-					if (lastNode != null && tid.equals(highWatermark)) { // shortcut if nothing has changed
-						target.node = target.node.next;
-						while (target.node != null && target.node.size.get(tid).equals(BigInteger.ZERO))
-							target.node = target.node.next;
-					} else {
-						target = locate(remainingOffset, tid);
-					}
-					if (target.offset.equals(target.node.size.get(tid))) { // this will still work if start is 0 and head is a space
-						target.node = target.node.next;
-						while (target.node != null && target.node.size.get(tid).equals(BigInteger.ZERO))
-							target.node = target.node.next;
-						target.offset = BigInteger.ZERO;
-					} 
-					if (target.node == null) {
-						pending = null;
-						return null;
-					}	
-					BigInteger takeLength = target.node.size.get(tid).subtract(target.offset).min(remainingLength);
-					ByteBuffer result = (ByteBuffer)target.node.object.get(tid).duplicate().position(target.offset.intValue());
-					if (result.position()!=0) 
-						result = result.slice();
-					result = (ByteBuffer)result.limit(takeLength.intValue());
-					remainingOffset = remainingOffset.add(takeLength);
-					remainingLength = remainingLength.subtract(takeLength);
-					lastNode = target.node;
-					pending = result;
-					return result;
-				});
-			}
-			
-		};
-		
+		return new ArrayList<ByteBuffer>().iterator();
 	}
 	
 	
