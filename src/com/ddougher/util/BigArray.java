@@ -1,19 +1,13 @@
 package com.ddougher.util;
 
-import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -43,9 +37,10 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  *
  */
 /*
- * This works by maintaining a constant, cross linked tree structure with all nodes represented. 
- * This is slightly more expensive than a skip list, but much better balanced, capable of concurrent
- * modification (like: defragmentation, growth, and redistribution), and time travel  
+ * The idea of maintaining a constant, cross linked tree structure with all nodes represented. 
+ * was discarded because, although push performant, structure and space optimization are not.
+ * 
+ * The rest of this comment is historical.
  * 
  * Operations are structured as moves, swaps, splits, consolidations, and other mutations of the 
  * Addressable and size values of nodes, but the structure of the tree remains constant.
@@ -60,47 +55,21 @@ import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
  * This structure is a precursor to "engrams". (yes, i just borrowed from a "science fiction" novel)
  * 
  */
+/*
+ * Some tenants for the new structure
+ * 
+ * 1) Once created, leafs can only be deleted by merging with their neighbors.
+ * 2) Leafs will always remain in sequential order.
+ * 3) Leafs are doubly linked forwards and backwards, and keep transaction history for their previous/next link changes
+ * 4) Structure is considered ephemeral.
+ *   4a) There will never be a structural node that doesnt have 2 leafs
+ * 5) Markers for transaction ordering are type 2 (time based) UUIDS. So the transaction density limit is 10m/s.
+ * 6) Our target for random insertion performance is > 50k/s
+ * 7) A typical m5 does 300k JOPS sec. A typical i7: 50k
+ * 8) The head and the tail can change due to insertion, but the root is permanent.
+ * 
+ */
 public class BigArray {
-
-	public ConcurrentHashMap<String, AtomicLong> metrics = new ConcurrentHashMap<String, AtomicLong>();
-	
-	private <T> T withMetric(String baseName, Supplier<T> action) {
-		long timestamp = System.nanoTime();
-		T result = action.get();
-		getMetric(baseName+".Time").addAndGet(System.nanoTime()-timestamp);
-		getMetric(baseName+".Count").addAndGet(1);
-		return result;
-	};
-	
-	private void withMetric(String baseName, Runnable action) {
-		withMetric(baseName, () -> {
-			action.run();
-			return null;
-		});
-	}
-	
-	public void dumpMetrics() {
-		ArrayList<String> al = new ArrayList<String>();
-		metrics.keySet().forEach(al::add);
-		Collections.sort(al);
-		al.forEach(k->{
-			if (k.endsWith(".Time")) {
-				System.out.println(k + " : " + ((double)metrics.get(k).get())/1000000);
-				System.out.println(k.replace(".Time", ".Avg") + " : " + ((double)(metrics.get(k).get()/metrics.get(k.replace(".Time", ".Count")).get()))/1000000);
-			} else {
-				System.out.println(k + " : " + metrics.get(k).get());
-			}
-		});
-	}
-	
-	private AtomicLong getMetric(String metricName) {
-		AtomicLong l = metrics.get(metricName);
-		if (l == null) {
-			metrics.putIfAbsent(metricName, new AtomicLong());
-			l = metrics.get(metricName);
-		}
-		return l;
-	}
 
 	public interface AssetFactory {
 		Addressable createAddressable();
@@ -108,84 +77,57 @@ public class BigArray {
 	}
 
 	public interface Sizeable {
-		void set(BigInteger size, UUID mark);
-		BigInteger get(UUID mark);
+		void set(BigInteger value, UUID tid);
+		BigInteger get(UUID tid);
 		Sizeable duplicate();
 	}
 	
 	public interface Addressable {
-		void set(ByteBuffer data, UUID mark);
-		void set(Addressable src, UUID mark);
-		void append(Addressable a, UUID mark);
-		long size(UUID mark);
-		ByteBuffer get(UUID mark);
+		void set(ByteBuffer data, UUID tid);
+		void set(Addressable src, UUID tid);
+		void append(Addressable a, UUID tid);
+		int size(UUID tid);
+		ByteBuffer get(UUID tid);
 
 		/** swaps a and b */
-		default void swap(Addressable b, UUID mark) {
-			ByteBuffer tmp = b.get(mark);
-			b.set(get(mark), mark);
-			set(tmp,mark);
+		default void swap(Addressable b, UUID tid) {
+			ByteBuffer tmp = b.get(tid);
+			b.set(get(tid), tid);
+			set(tmp,tid);
 		}
 		
 		/** changes the effective size of this addressable. Essentially the same as set(get(mark).duplicate().position(length).flip(),mark) */
-		default void resize(int length, UUID mark) {
-			set((ByteBuffer)get(mark).duplicate().position(length).flip(),mark);
+		default void resize(int length, UUID tid) {
+			set((ByteBuffer)get(tid).duplicate().position(length).flip(),tid);
 		}
-		/** Returns a new Addressable with a blank history that represents a subset of this addressable */
-		Addressable slice(int offset, UUID mark);
-	}
-
-	private static final Thread optimizerThread = new Thread(BigArray::optimizerLoop);
-	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
-
-	public static final int defaultFragmentLimit = 0;
-
-	static {
-		optimizerThread.setDaemon(true);
-		optimizerThread.start();
-	}
-
-	
-	private final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
-	private final Object transactionLock = new Object();
-	private final int fragmentLimit;
-	
-	private AssetFactory assetFactory;
-
-	private Node root; // After the first push, the root never changes
-	private Node head; // The head never changes
-	private BigInteger nodeIdCounter = BigInteger.ZERO;
-	
-	private volatile UUID highWatermark;
-	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
-
-	public BigArray(AssetFactory assetFactory, int fragmentLimit) {
-		super();
-		this.assetFactory = assetFactory;
-		this.fragmentLimit = fragmentLimit;
-		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
 	}
 	
-	public BigArray(AssetFactory assetFactory) {
-		this(assetFactory, defaultFragmentLimit);
+	public class Transaction {
+		UUID transactionId;;
+		LinkedHashMap<String, Runnable> postTransactionOperations = null;
+
+		public void addPostTransactionOperation(String key, Runnable r) {
+			if (postTransactionOperations == null)
+				postTransactionOperations = new LinkedHashMap<String, Runnable>();
+			postTransactionOperations.put(key, r);
+		}
 	}
 
-	
-	
 	class Location {
 		Node node;
-		BigInteger offset;
-		public Location(Node node, BigInteger offset) {
+		int nodeOffset;
+		public Location(Node node, int nodeOffset) {
 			super();
 			this.node = node;
-			this.offset = offset;
+			this.nodeOffset = nodeOffset;
 		}
 	}
 
 	class Node {
-		final Addressable object;
+		final Addressable data;
 		final Sizeable size;
-		volatile BigInteger free;
+		BigInteger free;   // number of free leafs
+		BigInteger count;  // number of leafs
 		Node parent;
 		Node left;
 		Node right;
@@ -194,9 +136,10 @@ public class BigArray {
 		BigInteger id;
 		public Node
 		(
-				Addressable object, 
+				Addressable data,
 				Sizeable size, 
 				BigInteger free,
+				BigInteger count,
 				Node parent,
 				Node left, 
 				Node right,
@@ -204,91 +147,20 @@ public class BigArray {
 				Node next
 		) {
 			super();
-			this.object = object;
+			this.data = data;
 			this.size = size;
+			this.free = free;
+			this.count = count;
 			this.parent = parent;
 			this.left = left;
 			this.right = right;
 			this.previous = previous;
 			this.next = next;
-			this.free = free;
 			this.id = (nodeIdCounter = nodeIdCounter.add(BigInteger.ONE));
 		}
 
-		/** Adds a new layer */
-		public void push(UUID tid) {
-			withMetric( "Node.Push", () -> {
-				if (object == null) 
-					throw new IllegalStateException("Push can only be called on leafs");
-				Node newParent = new Node(null, size.duplicate(), free, parent, this, null, null, null );
-				Node newSibling = new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO ,newParent, null, null, this, next );
-				if (parent.left == this) {
-					parent.left = newParent;
-				} else {
-					parent.right = newParent;
-				}
-				parent = newParent;
-				parent.right = newSibling;
-				next = newSibling;
-				if (newSibling.next!=null)
-					newSibling.next.previous = newSibling;
-				freeToParents(newSibling, BigInteger.ONE);
-			});
-		}
-		
-		/** Defragment's by appending and zeroing the next (if it would be under sizeLimit) */
-		public boolean defragment(int sizeLimit) {
-				if (object == null) 
-					throw new IllegalStateException("Defrag can only be called on leafs");
-				if (next == null)
-					throw new IllegalStateException("Should not be called on tail node");
-				return transactionally(tid->{
-					return withMetric( "Node.Defragment", () -> {
-						if (size.get(tid).equals(BigInteger.ZERO)||next.size.get(tid).equals(BigInteger.ZERO)) 
-							return false;
-						if (next.size.get(tid).longValue() + size.get(tid).longValue() <= sizeLimit ) {
-							BigInteger difference = next.size.get(tid);
-							object.append(next.object, tid);
-							next.object.set(ZERO_BUFFER, tid);
-							propagateToCommon(this, next, difference, difference.negate(), tid);
-							freeToParents(next, BigInteger.ONE);
-							return true;
-						}
-						return false;
-					});
-				});
-		}
-		
-		public void swapPrevious(UUID tid) {
-			withMetric( "Node.SwapPrevious", () -> {
-				previous.object.swap(object, tid);
-	
-				if (previous.size.get(tid).equals(BigInteger.ZERO)) 
-					freeToCommon(previous,this,BigInteger.ONE.negate(), BigInteger.ONE);
-				if (size.get(tid).equals(BigInteger.ZERO))
-					freeToCommon(previous,this,BigInteger.ONE, BigInteger.ONE.negate());
-	
-				BigInteger difference = previous.size.get(tid).subtract(size.get(tid));
-				propagateToCommon(previous, this, difference.negate(), difference, tid);
-			});
-		}
-		
-		public void swapNext(UUID tid) {
-			withMetric( "Node.SwapNext", () -> {
-				next.object.swap(object, tid);
-	
-				if (next.size.get(tid).equals(BigInteger.ZERO)) 
-					freeToCommon(next,this,BigInteger.ONE.negate(), BigInteger.ONE);
-				if (size.get(tid).equals(BigInteger.ZERO))
-					freeToCommon(next,this,BigInteger.ONE, BigInteger.ONE.negate());
-	
-				BigInteger difference = next.size.get(tid).subtract(size.get(tid));
-				propagateToCommon(next, this, difference.negate(), difference, tid);
-			});
-		}
-		
 		public String dump(String prefix, int depth) {
-			return withMetric( "Node.Dump", () -> {
+			return metricsHelper.withMetric( "Node.Dump", () -> {
 				StringBuilder sb = new StringBuilder();
 				for (int i = 0; i < depth; i++)
 					sb.append("    ");
@@ -307,7 +179,7 @@ public class BigArray {
 					.append(", ")
 					.append("u: "+(parent!=null?parent.id:"-"))
 					.append(", ")
-					.append("o: "+object)
+					.append("o: "+data)
 					.append("}\n");
 				
 				if (left != null)
@@ -320,46 +192,87 @@ public class BigArray {
 		}	
 	}
 
-	public String dump() {
-		return transactionally(()->{
-			return withMetric("BigArray.Dump", () -> {
-				StringBuilder sb = new StringBuilder();
-				sb
-					.append("HWM: " + highWatermark + "\n")
-					.append("FRE: " + root.free + "\n")
-					.append("DEP: " + depth + "\n")
-					.append("ROOT\n" +root.dump("",1))
-					.append("HEAD\n" + head.dump("",1));
-				return sb.toString();
-			});
-		});
+	public static final Comparator<UUID> timePrioritizedComparator = new Comparator<UUID>() {
+		@Override
+		public int compare(UUID o1, UUID o2) {
+			if (o1 == o2)
+				return 0;
+			if (o1 == null) 
+				return 1;
+			if (o2 == null)
+				return -1;
+			int i = Long.compare(o1.timestamp(), o2.timestamp());
+			if (i==0)
+				i = o1.compareTo(o2);
+			return i;
+		}
+	};
+	public static final int defaultFragmentLimit = 0;
+
+	private static final Thread optimizerThread = new Thread(BigArray::optimizerLoop);
+	private static final ByteBuffer ZERO_BUFFER = ByteBuffer.allocate(0);
+
+	static {
+		optimizerThread.setDaemon(true);
+		optimizerThread.start();
+	}
+
+	
+	private final ReentrantReadWriteLock structureLock = new ReentrantReadWriteLock(true);
+	private final Object transactionLock = new Object();
+	private final int fragmentLimit;
+	
+	private AssetFactory assetFactory;
+
+	private Node root; // After the first push, the root never changes
+	private Node head;
+	private Node tail;
+	private BigInteger nodeIdCounter = BigInteger.ZERO;
+	private MetricsHelper metricsHelper = new MetricsHelper();
+	
+	private volatile UUID highWatermark;
+	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
+
+	public BigArray(AssetFactory assetFactory, int fragmentLimit) {
+		super();
+		this.assetFactory = assetFactory;
+		this.fragmentLimit = fragmentLimit;
+		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
 	}
 	
-	private LinkedHashMap<String,Runnable> postTransactionOperations = new LinkedHashMap<>();
+	public BigArray(AssetFactory assetFactory) {
+		this(assetFactory, defaultFragmentLimit);
+	}
 	
-	private <T> T transactionally(Supplier<T> transaction) {
-		return withMetric("BigArray.Transaction.Outter", () -> {
-			LinkedList<Runnable> pops = new LinkedList<Runnable>();
-			structureLock.readLock().lock();
-			AtomicReference<T> ref = new AtomicReference<T>();
-			try {
-				synchronized(transactionLock) {
-					withMetric("BigArray.Transaction.Inner", () -> {
-						ref.set(transaction.get());
-					});
-					pops.addAll(postTransactionOperations.values());
-					postTransactionOperations.clear();
-				}
-			} finally {
-				structureLock.readLock().unlock();
-			}
-			pops.forEach(a->a.run());
-			return ref.get();
+
+	public String dump() {
+		return metricsHelper.withMetric("BigArray.Dump", () -> {
+			return transactionally(()->{
+					StringBuilder sb = new StringBuilder();
+					sb
+						.append("HWM: " + highWatermark + "\n")
+						.append("FRE: " + root.free + "\n")
+						.append("DEP: " + depth + "\n")
+						.append("ROOT\n" +root.dump("",1))
+						.append("HEAD\n" + head.dump("",1));
+					return sb.toString();
+				});
 		});
+	}
+
+	public <T> T transactionally(Supplier<T> transaction) {
+		structureLock.readLock().lock();
+		try {
+			synchronized(transactionLock) {
+				return transaction.get();
+			}
+		} finally {
+			structureLock.readLock().unlock();
+		}
 	}
 	
 	@SuppressWarnings("unused")
-	private void transactionally(Runnable transaction) {
+	public void transactionally(Runnable transaction) {
 		transactionally(()->{
 			transaction.run();
 			return null;
@@ -370,18 +283,22 @@ public class BigArray {
 	 * invoked anytime content structure is subject to change
 	 * @param transaction
 	 */
-	private <T> T transactionally(Function<UUID, T> transaction) {
-		return transactionally(() -> {
-			UUID transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
-			T result = transaction.apply(transactionId);
-			highWatermark = transactionId;
-			return result;
+	private <T> T transactionally(Function<Transaction, T> transaction) {
+		Transaction t = new Transaction();
+		T result = transactionally(() -> {
+			t.transactionId = TimeBasedUUIDGenerator.instance().nextUUID();
+			T ret = transaction.apply(t);
+			highWatermark = t.transactionId;
+			return ret;
 		});
+		t.postTransactionOperations.values().forEach(a->a.run());
+		return result;
 	}			
 	
-	private void transactionally(Consumer<UUID> transaction) {
-		transactionally(tid->{
-			transaction.accept(tid);
+	@SuppressWarnings("unused")
+	private void transactionally(Consumer<Transaction> transaction) {
+		transactionally(t->{
+			transaction.accept(t);
 			return null;
 		});
 	}
@@ -390,116 +307,187 @@ public class BigArray {
 	 * invoked anytime tree structure is subject to change
 	 * @param transaction
 	 */
-	private <T> T structurally(Function<UUID, T> transaction) {
-		return withMetric("BigArray.Structurally.Outter", () -> {
-			structureLock.writeLock().lock();
-			try {
-				return withMetric("BigArray.Structurally.Inner", () -> {
-					return transactionally(transaction);
-				});
-			} finally {
-				structureLock.writeLock().unlock();
-			}
-		});
+	private <T> T structurally(Function<Transaction, T> transaction) {
+		structureLock.writeLock().lock();
+		try {
+			return transactionally(transaction);
+		} finally {
+			structureLock.writeLock().unlock();
+		}
 	}
 	
-	private void structurally(Consumer<UUID> transaction) {
-		structurally(tid->{
-			transaction.accept(tid);
+	@SuppressWarnings("unused")
+	private void structurally(Consumer<Transaction> transaction) {
+		structurally(t->{
+			transaction.accept(t);
 			return null;
 		});
 	}
 	
 	
 	private Location locate(BigInteger off, UUID tid) {
-		return withMetric("BigArray.Locate", () -> {
+		return metricsHelper.withMetric("BigArray.Locate", () -> {
 			Node active = root;
-			BigInteger offset = off;
-			while (active.object == null) {
-				if (active.left.size.get(tid).compareTo(offset) >= 0) {
+			BigInteger remaining  = off;
+			while (active.data == null && remaining.compareTo(active.size.get(tid))>=0) {
+				if (active.left.size.get(tid).compareTo(remaining)>=0) {
 					active = active.left;
 				} else {
-					offset = offset.subtract(active.left.size.get(tid));
+					remaining = remaining.subtract(active.left.size.get(tid));
 					active = active.right;
 				}
 			}
-			return new Location(active,offset);
+
+			if (!remaining.equals(BigInteger.ZERO) && remaining.equals(active.size.get(tid)) && active.next != null) {
+				remaining = remaining.subtract(active.size.get(tid));
+				active = active.next;
+			}
+			
+			return new Location(active, remaining.intValue());
 		});
+	}
+
+	private Location split(BigInteger offset, Location l, Transaction t) {
+		ByteBuffer data = ((ByteBuffer) l.node.data.get(t.transactionId).duplicate().position(l.nodeOffset)).slice();
+		l.node.data.resize(l.nodeOffset, t.transactionId);
+		BigInteger difference = BigInteger.valueOf(l.nodeOffset).subtract(l.node.size.get(t.transactionId));
+		propagateDelta(l.node, difference, BigInteger.ZERO, BigInteger.ZERO, t);
+		insert(data, offset, l.nodeOffset, t);
+		return new Location(l.node.next, 0);
+	}
+	
+	private void propagateDelta(Node node, BigInteger size, BigInteger free, BigInteger count, Transaction t) {
+		for (Node active = node; active!=null; active=active.parent) {
+			if (!size.equals(BigInteger.ZERO))
+				active.size.set(active.size.get(t.transactionId).add(size),t.transactionId);
+			active.free = active.free.add(free);
+			active.count = active.count.add(count);
+		}
 	}
 	
 	/**
 	 * Inserts a block of data at the given offset.
 	 * 
 	 * @param data
-	 * .
-	 * @param offset
 	 * @param length
 	 */
 	public void insert(final ByteBuffer data, BigInteger offset) {
 		int length = data.limit();
+		transactionally(t->{
+			insert (data, offset, length, t);
+		});
+	}
+	
+	private void insert(ByteBuffer data, BigInteger offset, int length, Transaction t) {
+		Addressable a = assetFactory.createAddressable();
+		a.set(data, t.transactionId);
+
+		// steps: locate the node at the insertion point
+		Location l = locate(offset, t.transactionId);
 		
+		// if the current node is a space, wake it back up and return
+		if (l.node.size.get(t.transactionId).equals(BigInteger.ZERO)) {
+			l.node.data.set(data, t.transactionId);
+			propagateDelta(l.node, BigInteger.valueOf(length), BigInteger.ONE.negate(), BigInteger.ZERO, t);
+			return;
+		} 
+
+		// if the current node is the tail, the only option is to insert right
+		if (l.nodeOffset >= l.node.size.get(t.transactionId).intValue() && l.node.next == null) {
+			insertToRight(l.node, data, length, t);
+			// there should be a rebalancing step here
+			return;
+		}
+		
+		// possibly split the node, which involves a size reduction and then reinserts the fragment
+		if ((l.nodeOffset != 0)&&(l.nodeOffset < l.node.data.size(t.transactionId))) 
+			l = split(offset, l, t);
+		
+		
+		// do the insert
+		if (l.node.previous != null && rightSideIsDeeper(l.node.previous,l.node, t.transactionId)) {
+			insertToRight(l.node.previous, data, length, t);
+		} else {
+			insertToLeft(l.node, data, length, t);
+		}
+	}
+
+	@SuppressWarnings("unused")
+	private void balance(Node node, Transaction t) {
+		BigInteger countDifference = node.left.count.subtract(node.right.count);
+		int cval = countDifference.compareTo(BigInteger.ZERO);
+		if (cval<0) {
+			balanceRightToLeft(node.right, node.left, countDifference.abs(), t);
+		} else if (cval>0) {
+			balanceLeftToRight(node.left, node.right, countDifference.abs(), t);
+		}
+		if (node.parent!=null) 
+			balance(node.parent, t);
+	}
+
+	private void balanceRightToLeft(Node right, Node left, BigInteger abs, Transaction t) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	private void balanceLeftToRight(Node left, Node right, BigInteger abs, Transaction t) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	private boolean rightSideIsDeeper(Node left, Node right, UUID tid) {
+		HashSet<Node> discovered = new HashSet<>();
+		while (left.parent!=null || right.parent!=null) {
+			if (right.parent != null) {
+				if (!discovered.add(right.parent))
+					return false; // left got there first
+				right = right.parent;
+			}
+			if (left.parent != null) {
+				if (!discovered.add(left.parent)) 
+					return true; // this means right got there first
+				left = left.parent;
+			}
+		}
+		throw new IllegalStateException("Nodes do not resolve to a common parent");
+	}
+
+	private void insertToLeft(Node node, ByteBuffer data, int length, Transaction t) {
+		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, null, node, null, null );
+		newParent.left = new Node( assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node.previous, node);
+		node.previous = newParent.left;
+		if (node.parent.left == node) {
+			node.parent.left = newParent;
+		} else {
+			node.parent.right = newParent;
+		}
+		node.parent = newParent;
+		propagateDelta(node.previous, BigInteger.valueOf(length), length == 0 ? BigInteger.ONE: BigInteger.ZERO, BigInteger.ONE, t);
+	}
+
+	private void insertToRight(Node node, ByteBuffer data, int length, Transaction t) {
+		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, node, null, null, null );
+		newParent.right = new Node( assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node, node.next);
+		node.next = newParent.right;
+		if (node.parent.left == node) {
+			node.parent.left = newParent;
+		} else {
+			node.parent.right = newParent;
+		}
+		node.parent = newParent;
+		propagateDelta(node.next, BigInteger.valueOf(length), (length==0?BigInteger.ONE:BigInteger.ZERO), BigInteger.ONE, t);
 	}
 
 	@SuppressWarnings({ "unchecked" })
 	private static final void optimizerLoop() {
 	}
 	
-	private volatile boolean forceOptimizeFlag = false;
-	
-	private void forceOptimize() {
-		if (forceOptimizeFlag) return;
-		forceOptimizeFlag = true;
-		postTransactionOperations.put("forceOptimize", () -> { optimizeSpace(); });
-	}
-
-	/**
-	 * Runs full space optimization: Defragment, followed by push, followed by a spacewalk.
-	 * 
-	 * @return true if the spacewalk queue is empty
-	 */
 	protected boolean optimizeSpace() {
 		//  ( 2^(depth-1) ) / freespace > 10 when there is less than 10% freespace
-		return withMetric("BigArray.OptimizeSpace", () -> {
+		return metricsHelper.withMetric("BigArray.OptimizeSpace", () -> {
 			return false;
 		});
 	};
-	
-	private void propagateToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb, UUID tid) {
-		while (a!=b) {
-			if (a!=null) {
-				a.size.set(a.size.get(tid).add(diffa), tid);
-				a = a.parent;
-			}
-			if (b!=null) {
-				b.size.set(b.size.get(tid).add(diffb), tid);
-				b = b.parent;
-			}
-		}
-	}
-	
-	private void freeToCommon(Node a, Node b, BigInteger diffa, BigInteger diffb) {
-		while (a!=b) {
-			if (a!=null) {
-				a.free = a.free.add(diffa);
-				a = a.parent;
-			}
-			if (b!=null) {
-				b.free = b.free.add(diffb);
-				b = b.parent;
-			}
-		}
-	}
-
-	private void propagateToParents(Node target, BigInteger difference, UUID tid) {
-		for (; target!= null; target = target.parent) 
-			target.size.set(target.size.get(tid).add(difference), tid);
-	}
-
-	private void freeToParents(Node target, BigInteger difference) {
-		for (; target != null; target = target.parent)
-			target.free = target.free.add(difference);
-	}
-	
 	
 	public BigInteger size() {
 		return size(null);

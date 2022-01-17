@@ -3,7 +3,6 @@ package com.ddougher.util;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -19,21 +18,6 @@ public class MemoryAssetFactory implements AssetFactory {
 		return new MemAddressable();
 	}
 
-	public static final Comparator<UUID> timePrioritizedComparator = new Comparator<UUID>() {
-		@Override
-		public int compare(UUID o1, UUID o2) {
-			if (o1 == o2)
-				return 0;
-			if (o1 == null) 
-				return 1;
-			if (o2 == null)
-				return -1;
-			int i = Long.compare(o1.timestamp(), o2.timestamp());
-			if (i==0)
-				i = o1.compareTo(o2);
-			return i;
-		}
-	};
 	
 	@Override
 	public Sizeable createSizeable() {
@@ -41,7 +25,7 @@ public class MemoryAssetFactory implements AssetFactory {
 	}
 	
 	private class MemSizeable implements Sizeable {
-		TreeMap<UUID,BigInteger> sizes = new TreeMap<>(timePrioritizedComparator);
+		TreeMap<UUID,BigInteger> sizes = new TreeMap<>(BigArray.timePrioritizedComparator);
 		
 		public MemSizeable() {
 			super();
@@ -75,17 +59,10 @@ public class MemoryAssetFactory implements AssetFactory {
 	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	
 	private class MemAddressable implements Addressable {
-		TreeMap<UUID,ByteBuffer> memory = new TreeMap<UUID, ByteBuffer>(timePrioritizedComparator);
+		TreeMap<UUID,ByteBuffer> memory = new TreeMap<UUID, ByteBuffer>(BigArray.timePrioritizedComparator);
 
 		@Override
-		public Addressable slice(int offset, UUID mark) {
-			Addressable a = new MemAddressable();
-			a.set(((ByteBuffer) get(mark).duplicate().position(offset)).slice(), mark);
-			return a;
-		}
-		
-		@Override
-		public long size(UUID mark) {
+		public int size(UUID mark) {
 			return get(mark).limit();
 		}
 		
