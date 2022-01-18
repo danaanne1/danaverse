@@ -80,6 +80,8 @@ public class BigArray {
 		void set(BigInteger value, UUID tid);
 		BigInteger get(UUID tid);
 		Sizeable duplicate();
+		// converts the incoming sizeable to a series of transactional deltas and merges it with a duplicate of this one, returning the newly merged sizeable
+		Sizeable merge(Sizeable incoming);
 	}
 	
 	public interface Addressable {
@@ -415,24 +417,69 @@ public class BigArray {
 	@SuppressWarnings("unused")
 	private void balance(Node node, Transaction t) {
 		BigInteger countDifference = node.left.count.subtract(node.right.count);
-		int cval = countDifference.compareTo(BigInteger.ZERO);
-		if (cval<0) {
-			balanceRightToLeft(node.right, node.left, countDifference.abs(), t);
-		} else if (cval>0) {
-			balanceLeftToRight(node.left, node.right, countDifference.abs(), t);
+		if (countDifference.abs().compareTo(BigInteger.valueOf(4))>0) {
+			int cval = countDifference.compareTo(BigInteger.ZERO);
+			if (cval<0) {
+				balanceRightToLeft(node.right, node.left, countDifference.abs(), t);
+			} else if (cval>0) {
+				balanceLeftToRight(node.left, node.right, countDifference.abs(), t);
+			}
 		}
 		if (node.parent!=null) 
 			balance(node.parent, t);
 	}
 
 	private void balanceRightToLeft(Node right, Node left, BigInteger abs, Transaction t) {
-		// TODO Auto-generated method stub
+		if (right.data != null) return;
 		
+		// replace right with rights right, orphaning rights left
+		while(right.left != null && right.left.count.compareTo(abs)>=0 && right.left.data==null) 
+			right = right.left;
+		if (right.parent.right == right)
+			right.parent.right = right.right;
+		else
+			right.parent.left = right.right;
+		right.right.parent = right.parent;
+		propagateDelta(right.parent, right.size.get(t.transactionId).negate(), right.free.negate(), right.count.negate(), t);
+		right = right.left;
+		
+		// place a new structural node where left used to be, with right on the right and left on the left
+		while(left.right != null && left.right.count.compareTo(abs)>=0) 
+			left = left.right;
+		Node newParent = new Node(null, left.size.merge(right.size), left.free, left.count, left.parent, left, right, null, null );
+		if (left.parent.left == left)
+			left.parent.left = newParent;
+		else
+			left.parent.right = newParent;
+		newParent.right.parent = newParent;
+		newParent.left.parent = newParent;
+		propagateDelta(newParent, BigInteger.ZERO, right.free, right.count, t); // no size propagation
 	}
 
 	private void balanceLeftToRight(Node left, Node right, BigInteger abs, Transaction t) {
-		// TODO Auto-generated method stub
+		if (left.data != null) return;
 		
+		// replace left with lefts left, orphaning lefts right
+		while(left.right != null && left.right.count.compareTo(abs)>=0 && left.right.data==null) 
+			left = left.right;
+		if (left.parent.left == left)
+			left.parent.left = left.left;
+		else
+			left.parent.right = left.left;
+		left.left.parent = left.parent;
+		propagateDelta(left.parent, left.size.get(t.transactionId).negate(), left.free.negate(), left.count.negate(), t);
+		
+		// place a new structural node where right used to be, with left on the left and right on the right
+		while(right.left != null && right.left.count.compareTo(abs)>=0) 
+			right = right.left;
+		Node newParent = new Node(null, right.size.merge(left.size), right.free, right.count, right.parent, left, right, null, null );
+		if (right.parent.right == right)
+			right.parent.right = newParent;
+		else
+			right.parent.left = newParent;
+		newParent.left.parent = newParent;
+		newParent.right.parent = newParent;
+		propagateDelta(newParent, BigInteger.ZERO, left.free, left.count, t); // no size propagation
 	}
 
 	private boolean rightSideIsDeeper(Node left, Node right, UUID tid) {
