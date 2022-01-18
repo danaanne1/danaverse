@@ -54,6 +54,15 @@ public class MemoryAssetFactory implements AssetFactory {
 		public Sizeable duplicate() {
 			return new MemSizeable((TreeMap<UUID, BigInteger>)sizes.clone());
 		}
+
+		@Override
+		public Sizeable merge(Sizeable incoming) {
+			// TODO Auto-generated method stub
+			
+			// convert incoming to a series of deltas, and merge them into a duplicate of this sizable and return it.
+			
+			return null;
+		}
 	}
 
 	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
