@@ -59,7 +59,18 @@ class TestBigArray {
 	@DisplayName("Constructor Regression")
 	void test10() {
 		BigArray a = new BigArray(new MemoryAssetFactory());
+		System.out.println(a.dump());
 	}
 
+	@Test
+	@DisplayName("head insert")
+	void test20() {
+		BigArray a = new BigArray(new MemoryAssetFactory());
+		long ts = System.currentTimeMillis();
+		for (int i = 1; i < 1000000; i++) {
+ 			a.insert(ByteBuffer.wrap(new byte [] { (byte)(i/10000), (byte)((i/1000)%10), (byte)((i/100)%10), (byte)((i/10)%10), (byte)(i%10) }), BigInteger.ZERO);
+		}
+		System.out.println(System.currentTimeMillis()-ts);
+	}
 	
 }

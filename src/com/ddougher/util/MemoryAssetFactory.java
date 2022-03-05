@@ -3,7 +3,9 @@ package com.ddougher.util;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.Map;
+import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -37,6 +39,11 @@ public class MemoryAssetFactory implements AssetFactory {
 		}
 
 		@Override
+		public SortedSet<UUID> marks() {
+			return sizes.navigableKeySet();
+		}
+		
+		@Override
 		public void set(BigInteger size, UUID mark) {
 			sizes.put(mark, size);
 		}
@@ -57,11 +64,35 @@ public class MemoryAssetFactory implements AssetFactory {
 
 		@Override
 		public Sizeable merge(Sizeable incoming) {
-			// TODO Auto-generated method stub
+			MemSizeable target = new MemSizeable();
+			Iterator<UUID> iA = marks().iterator();
+			Iterator<UUID> iB = incoming.marks().iterator();
 			
-			// convert incoming to a series of deltas, and merge them into a duplicate of this sizable and return it.
+			UUID a = iA.hasNext()?iA.next():null;
+			UUID b = iB.hasNext()?iB.next():null;
+
+			if (a==null)
+				return incoming.duplicate();
+			if (b==null)
+				return duplicate();
 			
-			return null;
+			BigInteger deltaA = get(a);
+			BigInteger deltaB = incoming.get(b);
+
+			while (a != null || b != null) {
+				int cmp = BigArray.timePrioritizedComparator.compare(a, b);
+				if (cmp >=0) {
+					target.set(target.get(b).add(deltaB), b);
+					b = iB.hasNext()?iB.next():null;
+					deltaB = incoming.get(b).subtract(deltaB);
+				}
+				if (cmp <=0) {
+					target.set(target.get(a).add(deltaA), a);
+					a = iA.hasNext()?iA.next():null;
+					deltaA = get(a).subtract(deltaA);
+				}
+			}
+			return target;
 		}
 	}
 

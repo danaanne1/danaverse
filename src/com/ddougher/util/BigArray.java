@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
@@ -74,6 +75,16 @@ public class BigArray {
 	public interface AssetFactory {
 		Addressable createAddressable();
 		Sizeable createSizeable();
+		default Addressable createAddressable(ByteBuffer data, UUID tid) {
+			Addressable a = createAddressable();
+			a.set(data, tid);
+			return a;
+		}
+		default Sizeable createSizeable(BigInteger size, UUID tid) {
+			Sizeable s = createSizeable();
+			s.set(size, tid);
+			return s;
+		}
 	}
 
 	public interface Sizeable {
@@ -82,6 +93,7 @@ public class BigArray {
 		Sizeable duplicate();
 		// converts the incoming sizeable to a series of transactional deltas and merges it with a duplicate of this one, returning the newly merged sizeable
 		Sizeable merge(Sizeable incoming);
+		SortedSet<UUID> marks();
 	}
 	
 	public interface Addressable {
@@ -127,7 +139,7 @@ public class BigArray {
 
 	class Node {
 		final Addressable data;
-		final Sizeable size;
+		Sizeable size;
 		BigInteger free;   // number of free leafs
 		BigInteger count;  // number of leafs
 		Node parent;
@@ -161,7 +173,16 @@ public class BigArray {
 			this.id = (nodeIdCounter = nodeIdCounter.add(BigInteger.ONE));
 		}
 
+		@Override
+		public String toString() {
+			return dump("", 0, true);
+		}
+		
 		public String dump(String prefix, int depth) {
+			return dump(prefix,depth,true);
+		}
+		
+		public String dump(String prefix, int depth, boolean includeChildren) {
 			return metricsHelper.withMetric( "Node.Dump", () -> {
 				StringBuilder sb = new StringBuilder();
 				for (int i = 0; i < depth; i++)
@@ -175,6 +196,8 @@ public class BigArray {
 					.append(", ")
 					.append("f: "+free)
 					.append(", ")
+					.append("c: "+count)
+					.append(", ")
 					.append("p: "+(previous!=null?previous.id:"-"))
 					.append(", ")
 					.append("n: "+(next!=null?next.id:"-"))
@@ -184,10 +207,12 @@ public class BigArray {
 					.append("o: "+data)
 					.append("}\n");
 				
-				if (left != null)
-					sb.append(left.dump("L: ",depth+1));
-				if (right != null)
-					sb.append(right.dump("R: ",depth+1));
+				if (includeChildren) {
+					if (left != null)
+						sb.append(left.dump("L: ",depth+1));
+					if (right != null)
+						sb.append(right.dump("R: ",depth+1));
+				}
 				
 				return sb.toString();
 			});
@@ -227,19 +252,31 @@ public class BigArray {
 	private AssetFactory assetFactory;
 
 	private Node root; // After the first push, the root never changes
-	private Node head;
-	private Node tail;
 	private BigInteger nodeIdCounter = BigInteger.ZERO;
 	private MetricsHelper metricsHelper = new MetricsHelper();
 	
 	private volatile UUID highWatermark;
-	private volatile BigInteger depth; // is the number of layers from root to leaf, inclusive. The number of leafs is 2^(depth-1)
 
 	public BigArray(AssetFactory assetFactory, int fragmentLimit) {
 		super();
 		this.assetFactory = assetFactory;
 		this.fragmentLimit = fragmentLimit;
 		highWatermark = TimeBasedUUIDGenerator.instance().nextUUID();
+		root = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(4), BigInteger.valueOf(4), null, null, null, null, null);
+		root.left = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), BigInteger.valueOf(2), root, null, null, null, null);
+		root.right = new Node(null, assetFactory.createSizeable(), BigInteger.valueOf(2), BigInteger.valueOf(2), root, null, null, null, null);
+		root.left.left 
+			= new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, BigInteger.ONE, root.left, null, null, null, null);
+		root.left.left.next
+			= root.left.right
+			= new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, BigInteger.ONE, root.left, null, null, root.left.left, null);
+		root.left.right.next
+			= root.right.left
+			= new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, BigInteger.ONE, root.right, null, null, root.left.right, null);
+		root.right.left.next
+			= root.right.right
+			= new Node(assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ONE, BigInteger.ONE, root.right, null, null, root.right.left, null);
+	
 	}
 	
 	public BigArray(AssetFactory assetFactory) {
@@ -254,9 +291,8 @@ public class BigArray {
 					sb
 						.append("HWM: " + highWatermark + "\n")
 						.append("FRE: " + root.free + "\n")
-						.append("DEP: " + depth + "\n")
-						.append("ROOT\n" +root.dump("",1))
-						.append("HEAD\n" + head.dump("",1));
+						.append("CNT: " + root.count + "\n")
+						.append("ROOT\n" +root.dump("",1));
 					return sb.toString();
 				});
 		});
@@ -293,7 +329,8 @@ public class BigArray {
 			highWatermark = t.transactionId;
 			return ret;
 		});
-		t.postTransactionOperations.values().forEach(a->a.run());
+		if (t.postTransactionOperations!= null) 
+			t.postTransactionOperations.values().forEach(a->a.run());
 		return result;
 	}			
 	
@@ -305,33 +342,35 @@ public class BigArray {
 		});
 	}
 	
-	/**
-	 * invoked anytime tree structure is subject to change
-	 * @param transaction
-	 */
-	private <T> T structurally(Function<Transaction, T> transaction) {
-		structureLock.writeLock().lock();
-		try {
-			return transactionally(transaction);
-		} finally {
-			structureLock.writeLock().unlock();
-		}
-	}
-	
-	@SuppressWarnings("unused")
-	private void structurally(Consumer<Transaction> transaction) {
-		structurally(t->{
-			transaction.accept(t);
-			return null;
-		});
-	}
+//	/**
+//	 * invoked anytime tree structure is subject to change
+//	 * @param transaction
+//	 */
+//	private <T> T structurally(Function<Transaction, T> transaction) {
+//		structureLock.writeLock().lock();
+//		try {
+//			return transactionally(transaction);
+//		} finally {
+//			structureLock.writeLock().unlock();
+//		}
+//	}
+//	
+//	@SuppressWarnings("unused")
+//	private void structurally(Consumer<Transaction> transaction) {
+//		structurally(t->{
+//			transaction.accept(t);
+//			return null;
+//		});
+//	}
 	
 	
 	private Location locate(BigInteger off, UUID tid) {
 		return metricsHelper.withMetric("BigArray.Locate", () -> {
 			Node active = root;
 			BigInteger remaining  = off;
-			while (active.data == null && remaining.compareTo(active.size.get(tid))>=0) {
+
+			// descend to closest leaf
+			while (active.data == null) {
 				if (active.left.size.get(tid).compareTo(remaining)>=0) {
 					active = active.left;
 				} else {
@@ -339,7 +378,8 @@ public class BigArray {
 					active = active.right;
 				}
 			}
-
+			
+			// if the landed node matches the remaining size, try to move the pointer to the next node
 			if (!remaining.equals(BigInteger.ZERO) && remaining.equals(active.size.get(tid)) && active.next != null) {
 				remaining = remaining.subtract(active.size.get(tid));
 				active = active.next;
@@ -417,15 +457,14 @@ public class BigArray {
 	@SuppressWarnings("unused")
 	private void balance(Node node, Transaction t) {
 		BigInteger countDifference = node.left.count.subtract(node.right.count);
-		if (countDifference.abs().compareTo(BigInteger.valueOf(4))>0) {
+		if (countDifference.abs().compareTo(BigInteger.valueOf(10))>0) {
 			int cval = countDifference.compareTo(BigInteger.ZERO);
 			if (cval<0) {
 				balanceRightToLeft(node.right, node.left, countDifference.abs(), t);
 			} else if (cval>0) {
 				balanceLeftToRight(node.left, node.right, countDifference.abs(), t);
 			}
-		}
-		if (node.parent!=null) 
+		} else if (node.parent!=null) 
 			balance(node.parent, t);
 	}
 
@@ -440,20 +479,32 @@ public class BigArray {
 		else
 			right.parent.left = right.right;
 		right.right.parent = right.parent;
-		propagateDelta(right.parent, right.size.get(t.transactionId).negate(), right.free.negate(), right.count.negate(), t);
+		propagateDelta(right.parent, right.left.size.get(t.transactionId).negate(), right.left.free.negate(), right.left.count.negate(), t);
+
+		Node newParent = right;
+		// orphan:
 		right = right.left;
 		
 		// place a new structural node where left used to be, with right on the right and left on the left
 		while(left.right != null && left.right.count.compareTo(abs)>=0) 
 			left = left.right;
-		Node newParent = new Node(null, left.size.merge(right.size), left.free, left.count, left.parent, left, right, null, null );
+
+		// Node newParent = new Node(null, left.size.merge(right.size), left.free.add(right.free), left.count.add(right.count), left.parent, left, right, null, null );
+		newParent.size = left.size.merge(right.size);
+		newParent.free = left.free.add(right.free);
+		newParent.count = left.count.add(right.count);
+		newParent.parent = left.parent;
+		newParent.left = left;
+		newParent.right = right;
+		
 		if (left.parent.left == left)
 			left.parent.left = newParent;
 		else
 			left.parent.right = newParent;
 		newParent.right.parent = newParent;
 		newParent.left.parent = newParent;
-		propagateDelta(newParent, BigInteger.ZERO, right.free, right.count, t); // no size propagation
+		propagateDelta(newParent.parent, right.size.get(t.transactionId), right.free, right.count, t);
+
 	}
 
 	private void balanceLeftToRight(Node left, Node right, BigInteger abs, Transaction t) {
@@ -467,19 +518,33 @@ public class BigArray {
 		else
 			left.parent.right = left.left;
 		left.left.parent = left.parent;
-		propagateDelta(left.parent, left.size.get(t.transactionId).negate(), left.free.negate(), left.count.negate(), t);
+		propagateDelta(left.parent, left.right.size.get(t.transactionId).negate(), left.right.free.negate(), left.right.count.negate(), t);
+
+		Node newParent = left;
+		// orphan:
+		left = left.right;
+		
 		
 		// place a new structural node where right used to be, with left on the left and right on the right
 		while(right.left != null && right.left.count.compareTo(abs)>=0) 
 			right = right.left;
-		Node newParent = new Node(null, right.size.merge(left.size), right.free, right.count, right.parent, left, right, null, null );
+
+		// Node newParent = new Node(null, right.size.merge(left.size), right.free.add(left.free), right.count.add(left.count), right.parent, left, right, null, null );
+		newParent.size = right.size.merge(left.size);
+		newParent.free = right.free.add(left.free);
+		newParent.count = right.count.add(left.count);
+		newParent.parent = right.parent;
+		newParent.left = left;
+		newParent.right = right;
+		
 		if (right.parent.right == right)
 			right.parent.right = newParent;
 		else
 			right.parent.left = newParent;
 		newParent.left.parent = newParent;
 		newParent.right.parent = newParent;
-		propagateDelta(newParent, BigInteger.ZERO, left.free, left.count, t); // no size propagation
+		propagateDelta(newParent.parent, left.size.get(t.transactionId), left.free, left.count, t); // no size propagation
+
 	}
 
 	private boolean rightSideIsDeeper(Node left, Node right, UUID tid) {
@@ -501,7 +566,7 @@ public class BigArray {
 
 	private void insertToLeft(Node node, ByteBuffer data, int length, Transaction t) {
 		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, null, node, null, null );
-		newParent.left = new Node( assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node.previous, node);
+		newParent.left = new Node( assetFactory.createAddressable(data, t.transactionId), assetFactory.createSizeable(BigInteger.valueOf(length),t.transactionId), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node.previous, node);
 		node.previous = newParent.left;
 		if (node.parent.left == node) {
 			node.parent.left = newParent;
@@ -510,11 +575,12 @@ public class BigArray {
 		}
 		node.parent = newParent;
 		propagateDelta(node.previous, BigInteger.valueOf(length), length == 0 ? BigInteger.ONE: BigInteger.ZERO, BigInteger.ONE, t);
+		balance(node.parent,t);
 	}
 
 	private void insertToRight(Node node, ByteBuffer data, int length, Transaction t) {
 		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, node, null, null, null );
-		newParent.right = new Node( assetFactory.createAddressable(), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node, node.next);
+		newParent.right = new Node( assetFactory.createAddressable(data,t.transactionId), assetFactory.createSizeable(BigInteger.valueOf(length), t.transactionId), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node, node.next);
 		node.next = newParent.right;
 		if (node.parent.left == node) {
 			node.parent.left = newParent;
@@ -523,6 +589,7 @@ public class BigArray {
 		}
 		node.parent = newParent;
 		propagateDelta(node.next, BigInteger.valueOf(length), (length==0?BigInteger.ONE:BigInteger.ZERO), BigInteger.ONE, t);
+		balance(node.parent,t);
 	}
 
 	@SuppressWarnings({ "unchecked" })
