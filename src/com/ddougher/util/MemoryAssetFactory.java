@@ -27,7 +27,7 @@ public class MemoryAssetFactory implements AssetFactory {
 	}
 	
 	private class MemSizeable implements Sizeable {
-		TreeMap<UUID,BigInteger> sizes = new TreeMap<>(BigArray.timePrioritizedComparator);
+		TreeMap<UUID,BigInteger> sizes = new TreeMap<>(BigArrayImpl.timePrioritizedComparator);
 		
 		public MemSizeable() {
 			super();
@@ -80,7 +80,7 @@ public class MemoryAssetFactory implements AssetFactory {
 			BigInteger deltaB = incoming.get(b);
 
 			while (a != null || b != null) {
-				int cmp = BigArray.timePrioritizedComparator.compare(a, b);
+				int cmp = BigArrayImpl.timePrioritizedComparator.compare(a, b);
 				if (cmp >=0) {
 					target.set(target.get(b).add(deltaB), b);
 					deltaB = incoming.get(b);
@@ -101,7 +101,7 @@ public class MemoryAssetFactory implements AssetFactory {
 	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	
 	private class MemAddressable implements Addressable {
-		TreeMap<UUID,ByteBuffer> memory = new TreeMap<UUID, ByteBuffer>(BigArray.timePrioritizedComparator);
+		TreeMap<UUID,ByteBuffer> memory = new TreeMap<UUID, ByteBuffer>(BigArrayImpl.timePrioritizedComparator);
 
 		@Override
 		public int size(UUID mark) {
