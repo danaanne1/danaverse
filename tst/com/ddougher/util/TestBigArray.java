@@ -67,10 +67,35 @@ class TestBigArray {
 	void test20() {
 		BigArray a = new BigArray(new MemoryAssetFactory());
 		long ts = System.currentTimeMillis();
-		for (int i = 1; i < 1000000; i++) {
+		for (int i = 1; i < 50000; i++) {
  			a.insert(ByteBuffer.wrap(new byte [] { (byte)(i/10000), (byte)((i/1000)%10), (byte)((i/100)%10), (byte)((i/10)%10), (byte)(i%10) }), BigInteger.ZERO);
+ 			// System.out.println(a.dump());
 		}
 		System.out.println(System.currentTimeMillis()-ts);
 	}
 	
+	@Test
+	@DisplayName("tail insert")
+	void test30() {
+		BigArray a = new BigArray(new MemoryAssetFactory());
+		long ts = System.currentTimeMillis();
+		for (int i = 1; i < 50000; i++) {
+ 			a.insert(ByteBuffer.wrap(new byte [] { (byte)(i/10000), (byte)((i/1000)%10), (byte)((i/100)%10), (byte)((i/10)%10), (byte)(i%10) }), a.size());
+ 			// System.out.println(a.dump());
+		}
+		System.out.println(System.currentTimeMillis()-ts);
+	}
+
+	@Test
+	@DisplayName("random insert")
+	void test40() {
+		Random r = new Random();
+		BigArray a = new BigArray(new MemoryAssetFactory());
+		long ts = System.currentTimeMillis();
+		for (int i = 1; i < 50; i++) {
+ 			a.insert(ByteBuffer.wrap(new byte [] { (byte)(i/10000), (byte)((i/1000)%10), (byte)((i/100)%10), (byte)((i/10)%10), (byte)(i%10) }), BigInteger.valueOf(r.nextInt(i)*5));
+ 			System.out.println(a.dump());
+		}
+		System.out.println(System.currentTimeMillis()-ts);
+	}
 }

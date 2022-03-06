@@ -192,7 +192,7 @@ public class BigArray {
 				sb
 					.append(space+prefix+id)
 					.append(" { ")
-					.append("s: "+size.get(highWatermark))
+					.append("s: "+size.get(null))
 					.append(", ")
 					.append("f: "+free)
 					.append(", ")
@@ -457,7 +457,7 @@ public class BigArray {
 	@SuppressWarnings("unused")
 	private void balance(Node node, Transaction t) {
 		BigInteger countDifference = node.left.count.subtract(node.right.count);
-		if (countDifference.abs().compareTo(BigInteger.valueOf(10))>0) {
+		if (countDifference.abs().compareTo(BigInteger.valueOf(5))>0) {
 			int cval = countDifference.compareTo(BigInteger.ZERO);
 			if (cval<0) {
 				balanceRightToLeft(node.right, node.left, countDifference.abs(), t);
@@ -566,7 +566,7 @@ public class BigArray {
 
 	private void insertToLeft(Node node, ByteBuffer data, int length, Transaction t) {
 		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, null, node, null, null );
-		newParent.left = new Node( assetFactory.createAddressable(data, t.transactionId), assetFactory.createSizeable(BigInteger.valueOf(length),t.transactionId), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node.previous, node);
+		newParent.left = new Node( assetFactory.createAddressable(data, t.transactionId), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node.previous, node);
 		node.previous = newParent.left;
 		if (node.parent.left == node) {
 			node.parent.left = newParent;
@@ -580,7 +580,7 @@ public class BigArray {
 
 	private void insertToRight(Node node, ByteBuffer data, int length, Transaction t) {
 		Node newParent = new Node( null, node.size.duplicate(), node.free, node.count, node.parent, node, null, null, null );
-		newParent.right = new Node( assetFactory.createAddressable(data,t.transactionId), assetFactory.createSizeable(BigInteger.valueOf(length), t.transactionId), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node, node.next);
+		newParent.right = new Node( assetFactory.createAddressable(data,t.transactionId), assetFactory.createSizeable(), BigInteger.ZERO, BigInteger.ZERO, newParent, null, null, node, node.next);
 		node.next = newParent.right;
 		if (node.parent.left == node) {
 			node.parent.left = newParent;

@@ -83,11 +83,13 @@ public class MemoryAssetFactory implements AssetFactory {
 				int cmp = BigArray.timePrioritizedComparator.compare(a, b);
 				if (cmp >=0) {
 					target.set(target.get(b).add(deltaB), b);
+					deltaB = incoming.get(b);
 					b = iB.hasNext()?iB.next():null;
 					deltaB = incoming.get(b).subtract(deltaB);
 				}
 				if (cmp <=0) {
 					target.set(target.get(a).add(deltaA), a);
+					deltaA = get(a);
 					a = iA.hasNext()?iA.next():null;
 					deltaA = get(a).subtract(deltaA);
 				}
