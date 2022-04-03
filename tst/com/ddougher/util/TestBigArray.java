@@ -112,7 +112,7 @@ class TestBigArray {
 		System.out.println(System.currentTimeMillis()-ts);
 		ts = System.currentTimeMillis();
 		a.transact(ba->{
-			for (int i = 1; i < 100000; i++) {
+			for (int i = 1; i < 200000; i++) {
 	 			ba.insert(ByteBuffer.wrap(new byte [] { (byte)(i/10000), (byte)((i/1000)%10), (byte)((i/100)%10), (byte)((i/10)%10), (byte)(i%10) }), BigInteger.valueOf(r.nextInt((ba.size().intValue()+5)/5)*5));
 			}
 			return;

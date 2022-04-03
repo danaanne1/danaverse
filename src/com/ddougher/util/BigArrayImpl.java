@@ -189,7 +189,7 @@ public class BigArrayImpl implements BigArray {
 	
 	private AssetFactory assetFactory;
 
-	private Node root; // After the first push, the root never changes
+	private Node root; // the root never changes
 	private BigInteger nodeIdCounter = BigInteger.ZERO;
 	private MetricsHelper metricsHelper = new MetricsHelper();
 	
@@ -348,29 +348,6 @@ public class BigArrayImpl implements BigArray {
 		});
 	}
 	
-	
-//	/**
-//	 * invoked anytime tree structure is subject to change
-//	 * @param transaction
-//	 */
-//	private <T> T structurally(Function<Transaction, T> transaction) {
-//		structureLock.writeLock().lock();
-//		try {
-//			return transactionally(transaction);
-//		} finally {
-//			structureLock.writeLock().unlock();
-//		}
-//	}
-//	
-//	@SuppressWarnings("unused")
-//	private void structurally(Consumer<Transaction> transaction) {
-//		structurally(t->{
-//			transaction.accept(t);
-//			return null;
-//		});
-//	}
-	
-	
 	private Location locate(BigInteger off, UUID tid) {
 		return metricsHelper.withMetric("BigArray.Locate", () -> {
 			Node active = root;
@@ -461,7 +438,45 @@ public class BigArrayImpl implements BigArray {
 			insertToLeft(l.node, data, length, t);
 		}
 	}
-
+	
+	private Node head(Node commonParent) {
+		Node n = commonParent;
+		while(n.data == null && n.left != null)
+			n = n.left;
+		return n;
+	}
+	
+	private Node tail(Node commonParent) {
+		Node n = commonParent;
+		while(n.data == null && n.right != null)
+			n = n.right;
+		return n;
+	}
+	
+	/*
+	 * Progressive, recursive rebalancing operation
+	 */
+	private void restructure(Node fromParent) {
+		// rebuild diagonally until done, then return new parent
+	}
+	
+	
+	/*
+	 * Traverse leafs from left to right, consolidating nodes into assets and creating spaces
+	 */
+	private void defragment() {
+		
+	}
+	
+	
+	/*
+	 * Timeboxes. Combines UUID segments into window based asset substructures.
+	 */
+	private void timebox() {
+		
+	}
+	
+	
 	@SuppressWarnings("unused")
 	private void balance(Node node, Transaction t) {
 		BigInteger countDifference = node.left.count.subtract(node.right.count);
