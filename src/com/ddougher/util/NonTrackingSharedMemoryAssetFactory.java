@@ -33,9 +33,11 @@ import com.ddougher.util.BigArray.Sizeable;
  * the first (intsize) bytes of an addressable indicate the size
  * the next (intsize) bytes of an addressable indicate the reference count
  * 
- * if the reference count is zero, then the addressable is garbage collectible
+ * if the reference count is < 0, then the addressable is garbage collectible
+ * if the reference count is 0, this is an incomplete writeSlice (callers should acquire after write)
+ * 		this makes it easy to find and garbage collect incomplete slices at restart
  * 
- * garbage collection should be parasitic, and move the low watermark one block per operation
+ * garbage collection should be parasitic, and move the low watermark quickly
  * 
  * if the low watermark moves past a block boundary, then a file can be removed.
  * 
@@ -47,9 +49,9 @@ public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
 	final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
 	final Map<Integer, MappedByteBuffer> blocks = new HashMap<Integer, MappedByteBuffer>();
 	
-	File baseName;
+	File baseName = new File("data");
 	AtomicLong highWatermark = new AtomicLong(1L);
-	AtomicLong lowWatermark;
+	AtomicLong lowWatermark = new AtomicLong(1L);
 	
 	
 	private ByteBuffer assertBlock(int blockNumber) {
@@ -57,25 +59,70 @@ public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
 		return null;
 	}
 
-	public long writeSlice(ByteBuffer[] byteBuffers) {
-		// decide if the current block can hold the data
-		// if not, write a pre-freed slice
-		
-		// maybe allocate a new block
+	/**
+	 * fills a block with the values in the supplied byte buffers
+	 * it is the callers responsibility to acquire the block after writing
+	 * 
+	 * @param byteBuffers
+	 * @return
+	 */
+	private long writeSlice(ByteBuffer[] byteBuffers) {
+		int size = 0;
+		for (int i = byteBuffers.length-1; i >=0; i--)
+			size += byteBuffers[i].limit();
 
-		// write the new record, and dont forget to raise the highWatermark
-		
-		return 0;
+		long hwm;
+		int offsetInBlock;
+		int blockNumber;
+		ByteBuffer buffer;
+		synchronized(highWatermark) {
+			hwm = highWatermark.get();
+			offsetInBlock = (int)(hwm%BLOCK_MAX);
+			blockNumber = (int)(hwm/BLOCK_MAX);
+			
+			// ensure space to write meta for 2 records (this one and the next):
+			if (((hwm + size + 16)/BLOCK_MAX)!=blockNumber) {
+				int remaining = BLOCK_MAX - offsetInBlock;
+				ByteBuffer oldBlock = assertBlock(blockNumber);
+				synchronized(oldBlock) {
+					oldBlock.putInt(offsetInBlock, remaining);
+					oldBlock.putInt(offsetInBlock+4,0);
+				}
+				hwm+=remaining;
+				offsetInBlock = 0;
+				blockNumber+=1;
+			}
+
+			// write the size and free marker first
+			buffer = assertBlock(blockNumber);
+			synchronized(buffer) {
+				buffer.putInt(offsetInBlock,size+8);
+				buffer.putInt(offsetInBlock+4,0);
+			}
+			
+			// now that state is recoverable, set the highwatermark
+			highWatermark.set(hwm+size+8);
+		}
+		synchronized (buffer) {
+			// write the bytes outside of the HWM access
+			buffer.position(offsetInBlock+8);
+			for (int i=0; i < byteBuffers.length; i++) {
+				byteBuffers[i].position(0);
+				buffer.put(byteBuffers[i]);
+			}
+		}
+		return hwm;
 	}
 
-	public ByteBuffer retrieveSliceAt(long physicalOffset) {
-		int blockNumber = (int)(physicalOffset==0?0:physicalOffset/BLOCK_MAX);
+	private ByteBuffer retrieveSliceAt(long physicalOffset) {
+		if (physicalOffset==0) return EMPTY_BUFFER;
+		int blockNumber = (int)(physicalOffset/BLOCK_MAX);
 		int offsetInBlock = (int) (physicalOffset%BLOCK_MAX);
 		ByteBuffer block = assertBlock(blockNumber);
 		ByteBuffer retVal;
 		int size;
 		synchronized(block) {
-			size = block.getInt(offsetInBlock); 
+			size = block.getInt(offsetInBlock)-8; 
 			block.position(offsetInBlock+8);
 			retVal = block.slice();
 		}
@@ -83,8 +130,9 @@ public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
 		return retVal.asReadOnlyBuffer();
 	}
 
-	public void acquireSliceAt(long physicalOffset) {
-		int blockNumber = (int)(physicalOffset==0?0:physicalOffset/BLOCK_MAX);
+	private void acquireSliceAt(long physicalOffset) {
+		if (physicalOffset==0) return;
+		int blockNumber = (int)(physicalOffset/BLOCK_MAX);
 		int offsetInBlock = (int) (physicalOffset%BLOCK_MAX);
 		ByteBuffer block = assertBlock(blockNumber);
 		synchronized (block) {
@@ -92,22 +140,22 @@ public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
 		}
 	}
 
-	public void releaseSliceAt(long physicalOffset) {
-		int blockNumber = (int)(physicalOffset==0?0:physicalOffset/BLOCK_MAX);
+	private void releaseSliceAt(long physicalOffset) {
+		if (physicalOffset==0) return;
+		int blockNumber = (int)(physicalOffset/BLOCK_MAX);
 		int offsetInBlock = (int) (physicalOffset%BLOCK_MAX);
 		ByteBuffer block = assertBlock(blockNumber);
 		int refCount;
-		int size;
 		synchronized (block) {
 			refCount = block.getInt(offsetInBlock+4)-1;
-			block.putInt(offsetInBlock+4, refCount);
+			block.putInt(offsetInBlock+4, refCount==0?-1:refCount); // 0 is a temporary "dont clean" value
 		}
-		if (refCount <= 0) 
+		if (refCount == 0) 
 			raiseLowWaterMark(physicalOffset);
 	}
 
 	private void raiseLowWaterMark(long physicalOffset) {
-		// successively read blocks, as long as their refCounts are <= 0, raise the lwm
+		// successively read blocks, as long as their refCounts are < 0, raise the lwm
 		// if you lwm past a file boundary, delete the old file
 	}
 
@@ -121,7 +169,8 @@ public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
 		public void set(ByteBuffer data, UUID tid) {
 			releaseSliceAt(physicalOffset);
 			size = data.limit();
-			physicalOffset = writeSlice(new ByteBuffer [] { data });
+			physicalOffset = writeSlice(new ByteBuffer [] { data }); 
+			acquireSliceAt(physicalOffset);
 		}
 
 		@Override
