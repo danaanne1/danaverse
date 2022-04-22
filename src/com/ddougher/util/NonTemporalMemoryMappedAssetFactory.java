@@ -160,7 +160,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 	}
 
 
-	class NonTrackingSharedMemoryAddressable implements Addressable {
+	class NonTemporalMemoryMappedAddressable implements Addressable {
 		long physicalOffset = 0L;
 		int size = 0;
 		
@@ -176,17 +176,17 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 		@Override
 		public void set(Addressable src, UUID tid) {
 			releaseSliceAt(physicalOffset);
-			physicalOffset = ((NonTrackingSharedMemoryAddressable)src).physicalOffset;
-			size = ((NonTrackingSharedMemoryAddressable)src).size;
+			physicalOffset = ((NonTemporalMemoryMappedAddressable)src).physicalOffset;
+			size = ((NonTemporalMemoryMappedAddressable)src).size;
 			acquireSliceAt(physicalOffset);
 		}
 
 		@Override
 		public void append(Addressable a, UUID tid) {
-			long [] oldOffsets = { physicalOffset, ((NonTrackingSharedMemoryAddressable)a).physicalOffset };
+			long [] oldOffsets = { physicalOffset, ((NonTemporalMemoryMappedAddressable)a).physicalOffset };
 			ByteBuffer [] buffers = {
 					retrieveSliceAt(physicalOffset), 
-					retrieveSliceAt(((NonTrackingSharedMemoryAddressable)a).physicalOffset) 
+					retrieveSliceAt(((NonTemporalMemoryMappedAddressable)a).physicalOffset) 
 			};
 			physicalOffset = writeSlice(buffers);
 			size = buffers[0].limit() + buffers[1].limit();
@@ -209,7 +209,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 	
 	@Override
 	public Addressable createAddressable() {
-		return new NonTrackingSharedMemoryAddressable();
+		return new NonTemporalMemoryMappedAddressable();
 	}
 
 
