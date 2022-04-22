@@ -42,7 +42,7 @@ import com.ddougher.util.BigArray.Sizeable;
  * if the low watermark moves past a block boundary, then a file can be removed.
  * 
  */
-public class NonTrackingSharedMemoryAssetFactory implements AssetFactory {
+public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 
 	final int BLOCK_MAX = Integer.MAX_VALUE;
 	final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
