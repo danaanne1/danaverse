@@ -1,6 +1,8 @@
 package com.ddougher.util;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -10,11 +12,15 @@ import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.ShortBuffer;
+import java.nio.channels.FileChannel.MapMode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.ddougher.util.BigArray.Addressable;
 import com.ddougher.util.BigArray.AssetFactory;
@@ -47,7 +53,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 	final int BLOCK_MAX = Integer.MAX_VALUE;
 	final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
-	final Map<Integer, MappedByteBuffer> blocks = new HashMap<Integer, MappedByteBuffer>();
+	final Map<Integer, MappedByteBuffer> blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
+	
 	
 	File baseName = new File("data");
 	AtomicLong highWatermark = new AtomicLong(1L);
@@ -55,8 +62,23 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 	
 	
 	private ByteBuffer assertBlock(int blockNumber) {
-		// TODO Auto-generated method stub
-		return null;
+		ByteBuffer block;
+		if (null!=(block=blocks.get(blockNumber))) return block; 
+		synchronized(files) {
+			if (null!=(block=blocks.get(blockNumber))) return block;
+			RandomAccessFile file = files.get(blockNumber/40);
+			try {
+				if (file == null) 
+					files.put(blockNumber/40,file = new RandomAccessFile(baseName+Integer.toString(blockNumber/40), "rw"));
+				long desiredLength = ((long)(blockNumber%40))*BLOCK_MAX;
+				if (file.length()<desiredLength)
+					file.setLength(desiredLength);
+				block = file.getChannel().map(MapMode.READ_WRITE, desiredLength-BLOCK_MAX, BLOCK_MAX);
+			} catch (IOException ioe) {
+				throw new RuntimeException(ioe);
+			}
+		}
+		return block;
 	}
 
 	/**
