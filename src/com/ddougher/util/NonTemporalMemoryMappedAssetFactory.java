@@ -13,6 +13,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import com.ddougher.util.BigArray.Addressable;
 import com.ddougher.util.BigArray.AssetFactory;
@@ -58,6 +61,9 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private transient AtomicLong lowWatermark = new AtomicLong(1L);
 	
 	private File baseName = new File("data");
+	private transient boolean closed = false;
+	private transient ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
+	
 	
 	public NonTemporalMemoryMappedAssetFactory(String basePath) throws IOException {
 		baseName = new File(basePath);
@@ -67,20 +73,46 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		metaBuffer = metaFile.getChannel().map(MapMode.READ_WRITE, 0, 16);
 	}
 
-
 	@Override
 	public void close() throws IOException {
-		// set closed flag
-		// force all the blocks
-		// close all the files
-		// clear the maps
-		// garbage collect
+		closeLock.writeLock().lock();
+		try {
+			if (closed) return;
+			sync();
+			files.values().parallelStream().forEach(raf-> { try { raf.close(); } catch (IOException e) {} });
+			try { metaFile.close(); } catch (IOException e) { }
+			blocks.clear();
+			metaBuffer = null;
+			files.clear();
+		} finally {
+			closed = true;
+			closeLock.writeLock().unlock();
+		}
 		System.gc();
 	}
 
+	private void whenOpen(Runnable r) {
+		whenOpen(()->{
+			r.run();
+			return null;
+		});
+	}
+		
+	private <T> T whenOpen(Supplier<T> s) {
+		closeLock.readLock().lock();
+		try {
+			if (closed) throw new IllegalStateException("Factory is closed");
+			return s.get();
+		} finally { 
+			closeLock.readLock().unlock();
+		}
+	}
+		
 	public void sync() {
-		blocks.values().parallelStream().forEach(mmb -> { synchronized(mmb) {	mmb.force(); } } );
-		metaBuffer.force();
+		whenOpen(() -> {
+			blocks.values().parallelStream().forEach(mmb -> { synchronized(mmb) {	mmb.force(); } } );
+			metaBuffer.force();
+		});
 	}
 	
 	private void setHighWatermark(long hwm) {
@@ -228,31 +260,37 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		
 		@Override
 		public void set(ByteBuffer data, UUID tid) {
-			releaseSliceAt(physicalOffset);
-			size = data.limit();
-			physicalOffset = writeSlice(new ByteBuffer [] { data }); 
-			acquireSliceAt(physicalOffset);
+			whenOpen(()->{
+				releaseSliceAt(physicalOffset);
+				size = data.limit();
+				physicalOffset = writeSlice(new ByteBuffer [] { data }); 
+				acquireSliceAt(physicalOffset);
+			});
 		}
 
 		@Override
 		public void set(Addressable src, UUID tid) {
-			releaseSliceAt(physicalOffset);
-			physicalOffset = ((NonTemporalMemoryMappedAddressable)src).physicalOffset;
-			size = ((NonTemporalMemoryMappedAddressable)src).size;
-			acquireSliceAt(physicalOffset);
+			whenOpen(()->{
+				releaseSliceAt(physicalOffset);
+				physicalOffset = ((NonTemporalMemoryMappedAddressable)src).physicalOffset;
+				size = ((NonTemporalMemoryMappedAddressable)src).size;
+				acquireSliceAt(physicalOffset);
+			});
 		}
 
 		@Override
 		public void append(Addressable a, UUID tid) {
-			long [] oldOffsets = { physicalOffset, ((NonTemporalMemoryMappedAddressable)a).physicalOffset };
-			ByteBuffer [] buffers = {
-					retrieveSliceAt(physicalOffset), 
-					retrieveSliceAt(((NonTemporalMemoryMappedAddressable)a).physicalOffset) 
-			};
-			physicalOffset = writeSlice(buffers);
-			size = buffers[0].limit() + buffers[1].limit();
-			releaseSliceAt(oldOffsets[0]);
-			releaseSliceAt(oldOffsets[1]);
+			whenOpen(()->{
+				long [] oldOffsets = { physicalOffset, ((NonTemporalMemoryMappedAddressable)a).physicalOffset };
+				ByteBuffer [] buffers = {
+						retrieveSliceAt(physicalOffset), 
+						retrieveSliceAt(((NonTemporalMemoryMappedAddressable)a).physicalOffset) 
+				};
+				physicalOffset = writeSlice(buffers);
+				size = buffers[0].limit() + buffers[1].limit();
+				releaseSliceAt(oldOffsets[0]);
+				releaseSliceAt(oldOffsets[1]);
+			});
 		}
 
 		@Override
@@ -262,7 +300,9 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 
 		@Override
 		public ByteBuffer get(UUID tid) {
-			return retrieveSliceAt(physicalOffset);
+			return whenOpen(()->{
+				return retrieveSliceAt(physicalOffset);
+			});
 		}
 		
 	}
