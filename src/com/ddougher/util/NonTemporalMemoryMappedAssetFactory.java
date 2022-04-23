@@ -1,26 +1,18 @@
 package com.ddougher.util;
 
+import java.io.Closeable;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.io.Serializable;
 import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.DoubleBuffer;
-import java.nio.FloatBuffer;
-import java.nio.IntBuffer;
-import java.nio.LongBuffer;
 import java.nio.MappedByteBuffer;
-import java.nio.ShortBuffer;
 import java.nio.channels.FileChannel.MapMode;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.ddougher.util.BigArray.Addressable;
 import com.ddougher.util.BigArray.AssetFactory;
@@ -48,32 +40,78 @@ import com.ddougher.util.BigArray.Sizeable;
  * if the low watermark moves past a block boundary, then a file can be removed.
  * 
  */
-public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
+public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serializable, Closeable {
 
-	final int BLOCK_MAX = Integer.MAX_VALUE;
-	final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
-	final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
-	final Map<Integer, MappedByteBuffer> blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
+	private static final long serialVersionUID = 1L;
+	private static final int HWM_OFFSET = 0;
+	private static final int LWM_OFFSET = 8;
 	
+	private final int BLOCK_MAX = Integer.MAX_VALUE;
+	private final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
+	private final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
+	private final Map<Integer, MappedByteBuffer> blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
 	
-	File baseName = new File("data");
-	AtomicLong highWatermark = new AtomicLong(1L);
-	AtomicLong lowWatermark = new AtomicLong(1L);
+	private transient RandomAccessFile metaFile;
+	private transient MappedByteBuffer metaBuffer;
+
+	private transient AtomicLong highWatermark = new AtomicLong(1L);
+	private transient AtomicLong lowWatermark = new AtomicLong(1L);
 	
+	private File baseName = new File("data");
 	
+	public NonTemporalMemoryMappedAssetFactory(String basePath) throws IOException {
+		baseName = new File(basePath);
+		baseName.mkdirs();
+		metaFile = new RandomAccessFile(new File(baseName,"meta"),"rw");
+		metaFile.setLength(16);
+		metaBuffer = metaFile.getChannel().map(MapMode.READ_WRITE, 0, 16);
+	}
+
+
+	@Override
+	public void close() throws IOException {
+		// set closed flag
+		// force all the blocks
+		// close all the files
+		// clear the maps
+		// garbage collect
+		System.gc();
+	}
+
+	public void sync() {
+		blocks.values().parallelStream().forEach(mmb -> { synchronized(mmb) {	mmb.force(); } } );
+		metaBuffer.force();
+	}
+	
+	private void setHighWatermark(long hwm) {
+		metaBuffer.putLong(HWM_OFFSET,hwm);
+		highWatermark.set(hwm);
+	}
+
+	private long getHighWatermark() {
+		return highWatermark.get();
+	}
+	private void setLowWatermark(long lwm) {
+		metaBuffer.putLong(LWM_OFFSET,lwm);
+		lowWatermark.set(lwm);
+	}
+	private long getLowWatermark() {
+		return lowWatermark.get();
+	}
+
 	private ByteBuffer assertBlock(int blockNumber) {
-		ByteBuffer block;
+		MappedByteBuffer block;
 		if (null!=(block=blocks.get(blockNumber))) return block; 
 		synchronized(files) {
 			if (null!=(block=blocks.get(blockNumber))) return block;
 			RandomAccessFile file = files.get(blockNumber/40);
 			try {
 				if (file == null) 
-					files.put(blockNumber/40,file = new RandomAccessFile(baseName+Integer.toString(blockNumber/40), "rw"));
+					files.put(blockNumber/40,file = new RandomAccessFile(new File(baseName,Integer.toString(blockNumber/40)), "rw"));
 				long desiredLength = ((long)(blockNumber%40))*BLOCK_MAX;
 				if (file.length()<desiredLength)
 					file.setLength(desiredLength);
-				block = file.getChannel().map(MapMode.READ_WRITE, desiredLength-BLOCK_MAX, BLOCK_MAX);
+				blocks.put(blockNumber, block = file.getChannel().map(MapMode.READ_WRITE, desiredLength-BLOCK_MAX, BLOCK_MAX));
 			} catch (IOException ioe) {
 				throw new RuntimeException(ioe);
 			}
@@ -98,7 +136,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 		int blockNumber;
 		ByteBuffer buffer;
 		synchronized(highWatermark) {
-			hwm = highWatermark.get();
+			hwm = getHighWatermark();
 			offsetInBlock = (int)(hwm%BLOCK_MAX);
 			blockNumber = (int)(hwm/BLOCK_MAX);
 			
@@ -123,7 +161,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 			}
 			
 			// now that state is recoverable, set the highwatermark
-			highWatermark.set(hwm+size+8);
+			setHighWatermark(hwm+size+8);
 		}
 		synchronized (buffer) {
 			// write the bytes outside of the HWM access
@@ -135,6 +173,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory {
 		}
 		return hwm;
 	}
+
 
 	private ByteBuffer retrieveSliceAt(long physicalOffset) {
 		if (physicalOffset==0) return EMPTY_BUFFER;
