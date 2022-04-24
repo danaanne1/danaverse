@@ -17,6 +17,7 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -56,6 +57,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	
 	private transient Map<Integer, RandomAccessFile> files;
 	private transient Map<Integer, MappedByteBuffer> blocks;
+	private transient ConcurrentLinkedDeque<Integer> cleanerQueue;
 	private transient volatile boolean active;
 	private transient boolean closed;
 	
@@ -99,6 +101,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private void initTransients() {
 		files = new HashMap<Integer, RandomAccessFile>();
 		blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
+		cleanerQueue = new ConcurrentLinkedDeque<Integer>();
 		active = false;
 		closed = false;
 	}
@@ -192,7 +195,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 				ByteBuffer oldBlock = assertBlock(blockNumber);
 				synchronized(oldBlock) {
 					oldBlock.putInt(offsetInBlock, remaining);
-					oldBlock.putInt(offsetInBlock+4,0);
+					oldBlock.putInt(offsetInBlock+4,-1);
 				}
 				hwm+=remaining;
 				offsetInBlock = 0;
@@ -277,7 +280,6 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 					// check for crossing a block boundary
 					if ((lwm%BLOCK_MAX)==0) {
 						blocks.remove((int)((lwm/BLOCK_MAX)-1));
-
 						// additionally check for crossing a file boundary
 						if ((lwm/BLOCK_MAX)%40==0) {
 							synchronized (files) {
@@ -286,7 +288,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 								if (f!=null) {
 									try {
 										f.close();
-									} catch (IOException e) {
+										cleanerQueue.add(fileNum);
+									} catch (Exception e) {
 										throw new RuntimeException(e);
 									}
 								}
