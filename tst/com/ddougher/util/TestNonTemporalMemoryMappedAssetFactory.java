@@ -44,7 +44,7 @@ class TestNonTemporalMemoryMappedAssetFactory {
 
 	@AfterEach
 	void tearDown() throws Exception {
-		factory.close();
+		factory.join();
 	}
 
 	@Test

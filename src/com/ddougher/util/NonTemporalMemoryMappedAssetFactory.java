@@ -12,15 +12,19 @@ import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel.MapMode;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.ddougher.util.BigArray.Addressable;
@@ -57,7 +61,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	
 	private transient Map<Integer, RandomAccessFile> files;
 	private transient Map<Integer, MappedByteBuffer> blocks;
-	private transient ConcurrentLinkedDeque<Integer> cleanerQueue;
+	private transient LinkedBlockingDeque<Integer> cleanerQueue;
+	private transient Thread cleanerThread;
 	private transient volatile boolean active;
 	private transient boolean closed;
 	
@@ -69,6 +74,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
 	private ReentrantLock watermarkLock = new ReentrantLock();
 	
+	
 	/**
 	 * Initializes the meta file structures. This will only ever be called from inside whenOpen().
 	 */
@@ -78,6 +84,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 				if (!active) {
 					baseFile.mkdirs();
 					active = true;
+					cleanerThread = new Thread(this::cleanupFiles, baseFile.getName()+" file cleanup");
+					cleanerThread.start();
 				}
 			}
 		}
@@ -101,14 +109,47 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private void initTransients() {
 		files = new HashMap<Integer, RandomAccessFile>();
 		blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
-		cleanerQueue = new ConcurrentLinkedDeque<Integer>();
+		cleanerQueue = new LinkedBlockingDeque<Integer>();
 		active = false;
 		closed = false;
 	}
 
+	
+	// this is really messy but does the job. TODO clean this up and make it nice
+	private void cleanupFiles() {
+		while (active) {
+			try {
+				Integer fileNum = null;
+				LinkedList<Integer> reup = new LinkedList<Integer>();
+				while (null!= (fileNum = cleanerQueue.pollFirst(active?1000:1,TimeUnit.MILLISECONDS))) {
+					if (fileNum != null) {
+						File f = null;
+						f = new File(baseFile, Integer.toString(fileNum));
+						f.delete();
+						if (f!=null && f.exists()) {
+							reup.add(fileNum);
+						}
+					}
+				}
+				if (!reup.isEmpty()) {
+					System.gc();
+					cleanerQueue.addAll(reup);
+				}
+			} catch (Exception e) {
+			}
+		}
+
+		cleanerQueue.forEach(i->{
+			File f = new File(baseFile,Integer.toString(i));
+			if (f.exists()) f.delete();
+		});
+		
+	};
+
 	@Override
 	public void close() throws IOException {
 		closeLock.writeLock().lock();
+		System.gc();
 		try {
 			if (closed) return;
 			if (active) {
@@ -116,12 +157,12 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 				files.values().parallelStream().forEach(raf-> { try { raf.close(); } catch (IOException e) {} });
 				blocks.clear();
 				files.clear();
+				active = false;
 			}
 		} finally {
 			closed = true;
 			closeLock.writeLock().unlock();
 		}
-		System.gc();
 	}
 
 	private void whenOpen(Runnable r) {
@@ -288,7 +329,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 								if (f!=null) {
 									try {
 										f.close();
-										cleanerQueue.add(fileNum);
+										cleanerQueue.putLast(fileNum);
 									} catch (Exception e) {
 										throw new RuntimeException(e);
 									}
