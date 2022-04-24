@@ -140,7 +140,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 			try {
 				if (file == null) 
 					files.put(blockNumber/40,file = new RandomAccessFile(new File(baseName,Integer.toString(blockNumber/40)), "rw"));
-				long desiredLength = ((long)(blockNumber%40))*BLOCK_MAX;
+				long desiredLength = ((long)((blockNumber%40)+1))*BLOCK_MAX;
 				if (file.length()<desiredLength)
 					file.setLength(desiredLength);
 				blocks.put(blockNumber, block = file.getChannel().map(MapMode.READ_WRITE, desiredLength-BLOCK_MAX, BLOCK_MAX));
@@ -250,6 +250,34 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private void raiseLowWaterMark(long physicalOffset) {
 		// successively read blocks, as long as their refCounts are < 0, raise the lwm
 		// if you lwm past a file boundary, delete the old file
+		long lwm = getLowWatermark();
+		while (lwm < getHighWatermark() ) {
+			ByteBuffer block = assertBlock((int) (lwm/BLOCK_MAX));
+			synchronized(block) {
+				if (block.getInt((int) ((lwm % BLOCK_MAX)+4))>=0)
+					return;
+				setLowWatermark(lwm=lwm+block.getInt((int) (lwm % BLOCK_MAX)));
+			}
+			// check for crossing a block boundary
+			if ((lwm%BLOCK_MAX)==0) {
+				blocks.remove((int)((lwm/BLOCK_MAX)-1));
+
+				// additionally check for crossing a file boundary
+				if ((lwm/BLOCK_MAX)%40==0) {
+					synchronized (files) {
+						int fileNum = (int) (((lwm/BLOCK_MAX)/40)-1);
+						RandomAccessFile f = files.remove(fileNum);
+						if (f!=null) {
+							try {
+								f.close();
+							} catch (IOException e) {
+								throw new RuntimeException(e);
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 
