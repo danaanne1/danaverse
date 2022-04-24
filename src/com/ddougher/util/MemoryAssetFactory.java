@@ -1,5 +1,6 @@
 package com.ddougher.util;
 
+import java.io.Serializable;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -13,7 +14,8 @@ import com.ddougher.util.BigArray.Addressable;
 import com.ddougher.util.BigArray.AssetFactory;
 import com.ddougher.util.BigArray.Sizeable;
 
-public class MemoryAssetFactory implements AssetFactory {
+public class MemoryAssetFactory implements AssetFactory, Serializable {
+	private static final long serialVersionUID = 1L;
 
 	@Override
 	public Addressable createAddressable() {
@@ -101,6 +103,7 @@ public class MemoryAssetFactory implements AssetFactory {
 	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	
 	private class MemAddressable implements Addressable {
+		private static final long serialVersionUID = 1L;
 		TreeMap<UUID,ByteBuffer> memory = new TreeMap<UUID, ByteBuffer>(BigArrayImpl.timePrioritizedComparator);
 
 		@Override
@@ -157,6 +160,11 @@ public class MemoryAssetFactory implements AssetFactory {
 			byte [] buf = new byte[Math.min(20, b.limit())];
 			((ByteBuffer) b.duplicate().rewind()).get(buf);
 			return Arrays.toString(buf);
+		}
+
+		@Override
+		public AssetFactory factory() {
+			return MemoryAssetFactory.this;
 		}
 		
 	};

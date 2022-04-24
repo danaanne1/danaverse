@@ -1,5 +1,6 @@
 package com.ddougher.util;
 
+import java.io.Serializable;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
@@ -48,10 +49,11 @@ public interface BigArray {
 		SortedSet<UUID> marks();
 	}
 	
-	public interface Addressable {
+	public interface Addressable extends Serializable {
 		void set(ByteBuffer data, UUID tid);
 		void set(Addressable src, UUID tid);
 		void append(Addressable a, UUID tid);
+		AssetFactory factory();
 		int size(UUID tid);
 		ByteBuffer get(UUID tid);
 

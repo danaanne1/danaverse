@@ -3,6 +3,7 @@ package com.ddougher.util;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.io.ObjectInputStream;
 import java.io.RandomAccessFile;
 import java.io.Serializable;
 import java.math.BigInteger;
@@ -17,6 +18,7 @@ import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Supplier;
 
@@ -48,37 +50,57 @@ import com.ddougher.util.BigArray.Sizeable;
  */
 public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serializable, Closeable {
 
-	private static final long serialVersionUID = 1L;
-	private static final int HWM_OFFSET = 0;
-	private static final int LWM_OFFSET = 8;
+	private static final long serialVersionUID = 2L;
 	
-	private final int BLOCK_MAX;
-	private final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
-	private final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
-	private final Map<Integer, MappedByteBuffer> blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
+	private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	
-	private transient RandomAccessFile metaFile;
-	private transient MappedByteBuffer metaBuffer;
-
-	private transient AtomicLong highWatermark = new AtomicLong(1L);
-	private transient AtomicLong lowWatermark = new AtomicLong(1L);
+	private transient Map<Integer, RandomAccessFile> files;
+	private transient Map<Integer, MappedByteBuffer> blocks;
+	private transient volatile boolean active;
+	private transient boolean closed;
 	
 	private File baseFile;
-	private transient boolean closed = false;
-	private transient ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
+	private final int BLOCK_MAX;
 	
+	private AtomicLong highWatermark = new AtomicLong(1L);
+	private AtomicLong lowWatermark = new AtomicLong(1L); 
+	private ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
+	private ReentrantLock watermarkLock = new ReentrantLock();
 	
-	public NonTemporalMemoryMappedAssetFactory() throws IOException {
+	/**
+	 * Initializes the meta file structures. This will only ever be called from inside whenOpen().
+	 */
+	private void initMeta() {
+		if (!active) {
+			synchronized(this) {
+				if (!active) {
+					baseFile.mkdirs();
+					active = true;
+				}
+			}
+		}
+	}
+	
+	public NonTemporalMemoryMappedAssetFactory() {
 		this("data", Integer.MAX_VALUE);
 	}
 	
-	public NonTemporalMemoryMappedAssetFactory(String basePath, int maxBlockSize) throws IOException {
+	public NonTemporalMemoryMappedAssetFactory(String basePath, int maxBlockSize) {
 		BLOCK_MAX = maxBlockSize;
 		baseFile = new File(basePath);
-		baseFile.mkdirs();
-		metaFile = new RandomAccessFile(new File(baseFile,"meta"),"rw");
-		metaFile.setLength(16);
-		metaBuffer = metaFile.getChannel().map(MapMode.READ_WRITE, 0, 16);
+		initTransients();
+	}
+
+	private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
+		in.defaultReadObject();
+		initTransients();
+	}
+	
+	private void initTransients() {
+		files = new HashMap<Integer, RandomAccessFile>();
+		blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
+		active = false;
+		closed = false;
 	}
 
 	@Override
@@ -86,12 +108,12 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		closeLock.writeLock().lock();
 		try {
 			if (closed) return;
-			sync();
-			files.values().parallelStream().forEach(raf-> { try { raf.close(); } catch (IOException e) {} });
-			try { metaFile.close(); } catch (IOException e) { }
-			blocks.clear();
-			metaBuffer = null;
-			files.clear();
+			if (active) {
+				sync();
+				files.values().parallelStream().forEach(raf-> { try { raf.close(); } catch (IOException e) {} });
+				blocks.clear();
+				files.clear();
+			}
 		} finally {
 			closed = true;
 			closeLock.writeLock().unlock();
@@ -110,6 +132,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		closeLock.readLock().lock();
 		try {
 			if (closed) throw new IllegalStateException("Factory is closed");
+			initMeta();
 			return s.get();
 		} finally { 
 			closeLock.readLock().unlock();
@@ -119,26 +142,9 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	public void sync() {
 		whenOpen(() -> {
 			blocks.values().parallelStream().forEach(mmb -> { synchronized(mmb) {	mmb.force(); } } );
-			metaBuffer.force();
 		});
 	}
 	
-	private void setHighWatermark(long hwm) {
-		metaBuffer.putLong(HWM_OFFSET,hwm);
-		highWatermark.set(hwm);
-	}
-
-	private long getHighWatermark() {
-		return highWatermark.get();
-	}
-	private void setLowWatermark(long lwm) {
-		metaBuffer.putLong(LWM_OFFSET,lwm);
-		lowWatermark.set(lwm);
-	}
-	private long getLowWatermark() {
-		return lowWatermark.get();
-	}
-
 	private ByteBuffer assertBlock(int blockNumber) {
 		MappedByteBuffer block;
 		if (null!=(block=blocks.get(blockNumber))) return block; 
@@ -176,7 +182,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		int blockNumber;
 		ByteBuffer buffer;
 		synchronized(highWatermark) {
-			hwm = getHighWatermark();
+			hwm = highWatermark.get();
 			offsetInBlock = (int)(hwm%BLOCK_MAX);
 			blockNumber = (int)(hwm/BLOCK_MAX);
 			
@@ -201,7 +207,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 			}
 			
 			// now that state is recoverable, set the highwatermark
-			setHighWatermark(hwm+size+8);
+			highWatermark.set(hwm+size+8);
 		}
 		synchronized (buffer) {
 			// write the bytes outside of the HWM access
@@ -258,41 +264,47 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private void raiseLowWaterMark(long physicalOffset) {
 		// successively read blocks, as long as their refCounts are < 0, raise the lwm
 		// if you lwm past a file boundary, delete the old file
-		long lwm = getLowWatermark();
-		while (lwm < getHighWatermark() ) {
-			ByteBuffer block = assertBlock((int) (lwm/BLOCK_MAX));
-			synchronized(block) {
-				if (block.getInt((int) ((lwm % BLOCK_MAX)+4))>=0)
-					return;
-				setLowWatermark(lwm=lwm+block.getInt((int) (lwm % BLOCK_MAX)));
-			}
-			// check for crossing a block boundary
-			if ((lwm%BLOCK_MAX)==0) {
-				blocks.remove((int)((lwm/BLOCK_MAX)-1));
+		if (watermarkLock.tryLock()) {
+			try {
+				long lwm = lowWatermark.get();
+				while (lwm < highWatermark.get() ) {
+					ByteBuffer block = assertBlock((int) (lwm/BLOCK_MAX));
+					synchronized(block) {
+						if (block.getInt((int) ((lwm % BLOCK_MAX)+4))>=0)
+							return;
+						lowWatermark.set(lwm=lwm+block.getInt((int) (lwm % BLOCK_MAX)));
+					}
+					// check for crossing a block boundary
+					if ((lwm%BLOCK_MAX)==0) {
+						blocks.remove((int)((lwm/BLOCK_MAX)-1));
 
-				// additionally check for crossing a file boundary
-				if ((lwm/BLOCK_MAX)%40==0) {
-					synchronized (files) {
-						int fileNum = (int) (((lwm/BLOCK_MAX)/40)-1);
-						RandomAccessFile f = files.remove(fileNum);
-						if (f!=null) {
-							try {
-								f.close();
-							} catch (IOException e) {
-								throw new RuntimeException(e);
+						// additionally check for crossing a file boundary
+						if ((lwm/BLOCK_MAX)%40==0) {
+							synchronized (files) {
+								int fileNum = (int) (((lwm/BLOCK_MAX)/40)-1);
+								RandomAccessFile f = files.remove(fileNum);
+								if (f!=null) {
+									try {
+										f.close();
+									} catch (IOException e) {
+										throw new RuntimeException(e);
+									}
+								}
 							}
 						}
 					}
 				}
+			} finally {
+				watermarkLock.unlock();
 			}
 		}
 	}
 
 
-	class NonTemporalMemoryMappedAddressable implements Addressable {
+	private class NonTemporalMemoryMappedAddressable implements Addressable, Serializable {
+		private static final long serialVersionUID = 1L;
 		long physicalOffset = 0L;
 		int size = 0;
-		
 		
 		@Override
 		public void set(ByteBuffer data, UUID tid) {
@@ -339,6 +351,11 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 			return whenOpen(()->{
 				return retrieveSliceAt(physicalOffset);
 			});
+		}
+
+		@Override
+		public AssetFactory factory() {
+			return NonTemporalMemoryMappedAssetFactory.this;
 		}
 		
 	}
