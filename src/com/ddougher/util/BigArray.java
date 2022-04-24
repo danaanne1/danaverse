@@ -20,10 +20,7 @@ public interface BigArray {
 				return 1;
 			if (o2 == null)
 				return -1;
-			int i = Long.compare(o1.timestamp(), o2.timestamp());
-			if (i==0)
-				i = o1.compareTo(o2);
-			return i;
+			return Long.compare(o1.timestamp(), o2.timestamp());
 		}
 	};
 
