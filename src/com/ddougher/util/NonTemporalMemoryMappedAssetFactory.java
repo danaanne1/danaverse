@@ -5,11 +5,15 @@ import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.io.Serializable;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel.MapMode;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -343,8 +347,36 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 
 	@Override
 	public Sizeable createSizeable() {
-		// TODO Auto-generated method stub
-		return null;
+		return new Sizeable() {
+			Addressable a = createAddressable();
+			@Override
+			public void set(BigInteger value, UUID tid) {
+				a.set(ByteBuffer.wrap(value.toByteArray()), tid);
+			}
+			
+			@Override
+			public Sizeable merge(Sizeable incoming) {
+				return createSizeable(get(null).add(incoming.get(null)),null);
+			}
+			
+			@Override
+			public SortedSet<UUID> marks() {
+				return new TreeSet<UUID>(Collections.singleton(null));
+			}
+			
+			@Override
+			public BigInteger get(UUID tid) {
+				ByteBuffer buf = a.get(tid);
+				byte [] b = new byte[buf.limit()];
+				buf.get(b);
+				return new BigInteger(b);
+			}
+			
+			@Override
+			public Sizeable duplicate() {
+				return createSizeable(get(null), null);
+			}
+		};
 	}
 
 }
