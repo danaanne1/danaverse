@@ -52,7 +52,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private static final int HWM_OFFSET = 0;
 	private static final int LWM_OFFSET = 8;
 	
-	private final int BLOCK_MAX = Integer.MAX_VALUE;
+	private final int BLOCK_MAX;
 	private final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 	private final Map<Integer, RandomAccessFile> files = new HashMap<Integer, RandomAccessFile>();
 	private final Map<Integer, MappedByteBuffer> blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
@@ -63,15 +63,20 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private transient AtomicLong highWatermark = new AtomicLong(1L);
 	private transient AtomicLong lowWatermark = new AtomicLong(1L);
 	
-	private File baseName = new File("data");
+	private File baseFile;
 	private transient boolean closed = false;
 	private transient ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
 	
 	
-	public NonTemporalMemoryMappedAssetFactory(String basePath) throws IOException {
-		baseName = new File(basePath);
-		baseName.mkdirs();
-		metaFile = new RandomAccessFile(new File(baseName,"meta"),"rw");
+	public NonTemporalMemoryMappedAssetFactory() throws IOException {
+		this("data", Integer.MAX_VALUE);
+	}
+	
+	public NonTemporalMemoryMappedAssetFactory(String basePath, int maxBlockSize) throws IOException {
+		BLOCK_MAX = maxBlockSize;
+		baseFile = new File(basePath);
+		baseFile.mkdirs();
+		metaFile = new RandomAccessFile(new File(baseFile,"meta"),"rw");
 		metaFile.setLength(16);
 		metaBuffer = metaFile.getChannel().map(MapMode.READ_WRITE, 0, 16);
 	}
@@ -142,7 +147,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 			RandomAccessFile file = files.get(blockNumber/40);
 			try {
 				if (file == null) 
-					files.put(blockNumber/40,file = new RandomAccessFile(new File(baseName,Integer.toString(blockNumber/40)), "rw"));
+					files.put(blockNumber/40,file = new RandomAccessFile(new File(baseFile,Integer.toString(blockNumber/40)), "rw"));
 				long desiredLength = ((long)((blockNumber%40)+1))*BLOCK_MAX;
 				if (file.length()<desiredLength)
 					file.setLength(desiredLength);
