@@ -116,10 +116,11 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	
 	// this is really messy but does the job. TODO clean this up and make it nice
 	private void cleanupFiles() {
-		while (active) {
+		int j = 0;
+		while (active || (j < 1000 && !oldFileNumbers.isEmpty())) {
 			synchronized (cleanupMonitor) {
 				try {
-					cleanupMonitor.wait(10000);
+					if (active) cleanupMonitor.wait(10000);
 					LinkedList<Integer> toRemove = new LinkedList<Integer>();
 					oldFileNumbers.forEach(fn-> {
 						File f = new File(baseFile, Integer.toString(fn));
@@ -130,21 +131,14 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 					});
 					oldFileNumbers.removeAll(toRemove);
 				} catch (InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
 				}
 			}
-		}
-		int j=0;
-		while (!oldFileNumbers.isEmpty()&&j++<1000) {
-			LinkedList<Integer> toRemove = new LinkedList<Integer>();
-			oldFileNumbers.forEach(i->{
-				File f = new File(baseFile,Integer.toString(i));
-				if (f.exists()) f.delete();
-				else toRemove.add(i);
-			});
-			oldFileNumbers.removeAll(toRemove);
-			System.gc();
+			if (!active) {
+				if (oldFileNumbers.isEmpty())
+					return;
+				System.gc();
+				j++;
+			}
 		}
 	};
 
