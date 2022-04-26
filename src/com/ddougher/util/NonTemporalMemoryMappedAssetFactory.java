@@ -18,13 +18,10 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.LinkedBlockingDeque;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import com.ddougher.util.BigArray.Addressable;
@@ -61,7 +58,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	
 	private transient Map<Integer, RandomAccessFile> files;
 	private transient Map<Integer, MappedByteBuffer> blocks;
-	private transient LinkedBlockingDeque<Integer> cleanerQueue;
+	private transient ConcurrentLinkedQueue<Integer> oldFileNumbers;
+	private transient Object cleanupMonitor;
 	private transient Thread cleanerThread;
 	private transient volatile boolean active;
 	private transient boolean closed;
@@ -109,7 +107,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	private void initTransients() {
 		files = new HashMap<Integer, RandomAccessFile>();
 		blocks = new ConcurrentHashMap<Integer, MappedByteBuffer>();
-		cleanerQueue = new LinkedBlockingDeque<Integer>();
+		oldFileNumbers = new ConcurrentLinkedQueue<Integer>();
+		cleanupMonitor = new Object();
 		active = false;
 		closed = false;
 	}
@@ -118,38 +117,40 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	// this is really messy but does the job. TODO clean this up and make it nice
 	private void cleanupFiles() {
 		while (active) {
-			try {
-				Integer fileNum = null;
-				LinkedList<Integer> reup = new LinkedList<Integer>();
-				while (null!= (fileNum = cleanerQueue.pollFirst(active?1000:1,TimeUnit.MILLISECONDS))) {
-					if (fileNum != null) {
-						File f = null;
-						f = new File(baseFile, Integer.toString(fileNum));
-						f.delete();
-						if (f!=null && f.exists()) {
-							reup.add(fileNum);
-						}
-					}
+			synchronized (cleanupMonitor) {
+				try {
+					cleanupMonitor.wait(10000);
+					LinkedList<Integer> toRemove = new LinkedList<Integer>();
+					oldFileNumbers.forEach(fn-> {
+						File f = new File(baseFile, Integer.toString(fn));
+						if (f.exists())
+							f.delete();
+						else
+							toRemove.add(fn);
+					});
+					oldFileNumbers.removeAll(toRemove);
+				} catch (InterruptedException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
 				}
-				if (!reup.isEmpty()) {
-					System.gc();
-					cleanerQueue.addAll(reup);
-				}
-			} catch (Exception e) {
 			}
 		}
-
-		cleanerQueue.forEach(i->{
-			File f = new File(baseFile,Integer.toString(i));
-			if (f.exists()) f.delete();
-		});
-		
+		while (!oldFileNumbers.isEmpty()) {
+			LinkedList<Integer> toRemove = new LinkedList<Integer>();
+			oldFileNumbers.forEach(i->{
+				File f = new File(baseFile,Integer.toString(i));
+				if (f.exists()) f.delete();
+				else toRemove.add(i);
+			});
+			oldFileNumbers.removeAll(toRemove);
+			System.gc();
+		}
 	};
 
+	
 	@Override
 	public void close() throws IOException {
 		closeLock.writeLock().lock();
-		System.gc();
 		try {
 			if (closed) return;
 			if (active) {
@@ -158,7 +159,13 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 				blocks.clear();
 				files.clear();
 				active = false;
+				synchronized(cleanupMonitor) {
+					cleanupMonitor.notifyAll();
+				}
+				cleanerThread.join();
 			}
+		} catch (InterruptedException e) {
+			throw new IOException(e);
 		} finally {
 			closed = true;
 			closeLock.writeLock().unlock();
@@ -329,7 +336,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 								if (f!=null) {
 									try {
 										f.close();
-										cleanerQueue.putLast(fileNum);
+										oldFileNumbers.add(fileNum);
 									} catch (Exception e) {
 										throw new RuntimeException(e);
 									}
