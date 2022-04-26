@@ -135,7 +135,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 				}
 			}
 		}
-		while (!oldFileNumbers.isEmpty()) {
+		int j=0;
+		while (!oldFileNumbers.isEmpty()&&j++<1000) {
 			LinkedList<Integer> toRemove = new LinkedList<Integer>();
 			oldFileNumbers.forEach(i->{
 				File f = new File(baseFile,Integer.toString(i));
