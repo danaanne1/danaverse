@@ -6,27 +6,18 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.RandomAccessFile;
 import java.io.Serializable;
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel.MapMode;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.SortedSet;
-import java.util.TreeSet;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Supplier;
-
-import com.ddougher.util.BigArray.Addressable;
-import com.ddougher.util.BigArray.AssetFactory;
-import com.ddougher.util.BigArray.Sizeable;
 
 /*
  * Must support serialization via a recreation strategy
@@ -50,7 +41,7 @@ import com.ddougher.util.BigArray.Sizeable;
  * if the low watermark moves past a block boundary, then a file can be removed.
  * 
  */
-public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serializable, Closeable {
+public class MemoryMappedAssetFactory implements AssetFactory, Serializable, Closeable {
 
 	private static final long serialVersionUID = 2L;
 	
@@ -89,11 +80,11 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		}
 	}
 	
-	public NonTemporalMemoryMappedAssetFactory() {
+	public MemoryMappedAssetFactory() {
 		this("data", Integer.MAX_VALUE);
 	}
 	
-	public NonTemporalMemoryMappedAssetFactory(String basePath, int maxBlockSize) {
+	public MemoryMappedAssetFactory(String basePath, int maxBlockSize) {
 		BLOCK_MAX = maxBlockSize;
 		baseFile = new File(basePath);
 		initTransients();
@@ -347,13 +338,13 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	}
 
 
-	private class NonTemporalMemoryMappedAddressable implements Addressable, Serializable {
+	private class MemoryMappedAddressable implements Addressable, Serializable {
 		private static final long serialVersionUID = 1L;
 		long physicalOffset = 0L;
 		int size = 0;
 		
 		@Override
-		public void set(ByteBuffer data, UUID tid) {
+		public void set(ByteBuffer data) {
 			whenOpen(()->{
 				releaseSliceAt(physicalOffset);
 				size = data.limit();
@@ -363,22 +354,22 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		}
 
 		@Override
-		public void set(Addressable src, UUID tid) {
+		public void set(Addressable src) {
 			whenOpen(()->{
 				releaseSliceAt(physicalOffset);
-				physicalOffset = ((NonTemporalMemoryMappedAddressable)src).physicalOffset;
-				size = ((NonTemporalMemoryMappedAddressable)src).size;
+				physicalOffset = ((MemoryMappedAddressable)src).physicalOffset;
+				size = ((MemoryMappedAddressable)src).size;
 				acquireSliceAt(physicalOffset);
 			});
 		}
 
 		@Override
-		public void append(Addressable a, UUID tid) {
+		public void append(Addressable a) {
 			whenOpen(()->{
-				long [] oldOffsets = { physicalOffset, ((NonTemporalMemoryMappedAddressable)a).physicalOffset };
+				long [] oldOffsets = { physicalOffset, ((MemoryMappedAddressable)a).physicalOffset };
 				ByteBuffer [] buffers = {
 						retrieveSliceAt(physicalOffset), 
-						retrieveSliceAt(((NonTemporalMemoryMappedAddressable)a).physicalOffset) 
+						retrieveSliceAt(((MemoryMappedAddressable)a).physicalOffset) 
 				};
 				physicalOffset = writeSlice(buffers);
 				size = buffers[0].limit() + buffers[1].limit();
@@ -388,12 +379,12 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 		}
 
 		@Override
-		public int size(UUID tid) {
+		public int size() {
 			return size;
 		}
 
 		@Override
-		public ByteBuffer get(UUID tid) {
+		public ByteBuffer get() {
 			return whenOpen(()->{
 				return retrieveSliceAt(physicalOffset);
 			});
@@ -401,7 +392,7 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 
 		@Override
 		public AssetFactory factory() {
-			return NonTemporalMemoryMappedAssetFactory.this;
+			return MemoryMappedAssetFactory.this;
 		}
 		
 	}
@@ -409,42 +400,8 @@ public class NonTemporalMemoryMappedAssetFactory implements AssetFactory, Serial
 	
 	@Override
 	public Addressable createAddressable() {
-		return new NonTemporalMemoryMappedAddressable();
+		return new MemoryMappedAddressable();
 	}
 
-
-	@Override
-	public Sizeable createSizeable() {
-		return new Sizeable() {
-			Addressable a = createAddressable();
-			@Override
-			public void set(BigInteger value, UUID tid) {
-				a.set(ByteBuffer.wrap(value.toByteArray()), tid);
-			}
-			
-			@Override
-			public Sizeable merge(Sizeable incoming) {
-				return createSizeable(get(null).add(incoming.get(null)),null);
-			}
-			
-			@Override
-			public SortedSet<UUID> marks() {
-				return new TreeSet<UUID>(Collections.singleton(null));
-			}
-			
-			@Override
-			public BigInteger get(UUID tid) {
-				ByteBuffer buf = a.get(tid);
-				byte [] b = new byte[buf.limit()];
-				buf.get(b);
-				return new BigInteger(b);
-			}
-			
-			@Override
-			public Sizeable duplicate() {
-				return createSizeable(get(null), null);
-			}
-		};
-	}
 
 }
