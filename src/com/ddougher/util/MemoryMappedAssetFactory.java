@@ -12,6 +12,7 @@ import java.nio.channels.FileChannel.MapMode;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
@@ -81,12 +82,12 @@ public class MemoryMappedAssetFactory implements AssetFactory, Serializable, Clo
 	}
 	
 	public MemoryMappedAssetFactory() {
-		this("data", Integer.MAX_VALUE);
+		this(Optional.empty(), Optional.empty());
 	}
 	
-	public MemoryMappedAssetFactory(String basePath, int maxBlockSize) {
-		BLOCK_MAX = maxBlockSize;
-		baseFile = new File(basePath);
+	public MemoryMappedAssetFactory(Optional<String> basePath, Optional<Integer> maxBlockSize) {
+		BLOCK_MAX = maxBlockSize.orElse(Integer.MAX_VALUE);
+		baseFile = new File(basePath.orElse("data"));
 		initTransients();
 	}
 
@@ -347,9 +348,14 @@ public class MemoryMappedAssetFactory implements AssetFactory, Serializable, Clo
 		public void set(ByteBuffer data) {
 			whenOpen(()->{
 				releaseSliceAt(physicalOffset);
-				size = data.limit();
-				physicalOffset = writeSlice(new ByteBuffer [] { data }); 
-				acquireSliceAt(physicalOffset);
+				if (data==null ||data.limit()<=0) {
+					size = 0;
+					physicalOffset = 0L;
+				} else {
+					size = data.limit();
+					physicalOffset = writeSlice(new ByteBuffer [] { data }); 
+					acquireSliceAt(physicalOffset);
+				}
 			});
 		}
 

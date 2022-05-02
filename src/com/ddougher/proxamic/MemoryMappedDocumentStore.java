@@ -1,14 +1,16 @@
 package com.ddougher.proxamic;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.ConcurrentModificationException;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import com.ddougher.util.AssetFactory;
 import com.ddougher.util.AssetFactory.Addressable;
 import com.ddougher.util.MemoryMappedAssetFactory;
 import com.theunknowablebits.proxamic.AbstractDocumentStore;
@@ -23,9 +25,10 @@ import com.theunknowablebits.proxamic.Setter;
  * 
  * @author Dana
  */
-public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore {
+public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Serializable, Closeable {
 
-	AssetFactory assetFactory;
+	private static final long serialVersionUID = 1L;
+	MemoryMappedAssetFactory assetFactory;
 	ConcurrentNavigableMap<String, Record> index;
 	
 	private class Record implements Serializable {
@@ -50,16 +53,16 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		}
 	}
 
-	
-	public MemoryMappedDocumentStore(Supplier<Document> docFromNothing, Function<ByteBuffer, Document> docFromBytes, Supplier<String> idSupplier) {
+	public MemoryMappedDocumentStore
+	(
+			Optional<String> basePath, 
+			Optional<Integer> blockSize,
+			Optional<Supplier<Document>> docFromNothing, 
+			Optional<Function<ByteBuffer, Document>> docFromBytes, 
+			Optional<Supplier<String>> idSupplier
+	) {
 		super(docFromNothing, docFromBytes, idSupplier);
-		assetFactory = new MemoryMappedAssetFactory();
-		index = new ConcurrentSkipListMap<String, Record>();
-	}
-
-	public MemoryMappedDocumentStore(Supplier<Document> docFromNothing, Function<ByteBuffer, Document> docFromBytes) {
-		super(docFromNothing, docFromBytes);
-		assetFactory = new MemoryMappedAssetFactory();
+		assetFactory = new MemoryMappedAssetFactory(basePath, blockSize);
 		index = new ConcurrentSkipListMap<String, Record>();
 	}
 
@@ -67,6 +70,11 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		super();
 		assetFactory = new MemoryMappedAssetFactory();
 		index = new ConcurrentSkipListMap<String, Record>();
+	}
+	
+	@Override
+	public void close() throws IOException {
+		assetFactory.close();
 	}
 	
 	interface MemoryMappedDocument extends DocumentView {
@@ -139,6 +147,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 
 			// no need to release, since the current record no longer has a lock
 			index.remove(docId);
+			storageRecord.addressable.free();
 		}
 	}
 	
@@ -205,5 +214,6 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		if ( ( storageRecord != null ) && ( document.as(MemoryMappedDocument.class).VERSION()!=storageRecord.versionNumber)) 
 			throw new ConcurrentModificationException("Version mismatch.");
 	}
+
 
 }

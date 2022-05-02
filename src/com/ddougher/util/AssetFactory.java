@@ -1,12 +1,11 @@
 package com.ddougher.util;
 
-import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.UUID;
 
 public interface AssetFactory {
 
-	public interface Addressable extends Serializable {
+	public interface Addressable {
 		void set(ByteBuffer data);
 		void set(Addressable src);
 		void append(Addressable a);
@@ -19,6 +18,10 @@ public interface AssetFactory {
 			ByteBuffer tmp = b.get();
 			b.set(get());
 			set(tmp);
+		}
+		
+		default void free() {
+			set((ByteBuffer)null);
 		}
 		
 		/** changes the effective size of this addressable. Essentially the same as set(get(mark).duplicate().position(length).flip(),mark) */
