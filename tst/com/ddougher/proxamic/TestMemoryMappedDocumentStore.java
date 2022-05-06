@@ -1,6 +1,12 @@
 package com.ddougher.proxamic;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -9,6 +15,7 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.ConcurrentModificationException;
 import java.util.Optional;
 
@@ -20,7 +27,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.theunknowablebits.proxamic.BuffDocument;
 import com.theunknowablebits.proxamic.Document;
 import com.theunknowablebits.proxamic.DocumentStore;
 import com.theunknowablebits.proxamic.DocumentStoreAware;
@@ -57,6 +63,54 @@ class TestMemoryMappedDocumentStore {
 	}
 
 
+	@Nested
+	@DisplayName("docstore lifecycle")
+	class MGMT {
+		
+		@Test
+		@DisplayName("serialization")
+		void testCanSerializeDocStore() throws Exception {
+			docStore.close();
+			byte [] bytes;
+			try (ByteArrayOutputStream bout = new ByteArrayOutputStream();
+					ObjectOutputStream oout = new ObjectOutputStream(bout) )
+			{
+				oout.writeObject(docStore);
+				oout.close();
+				bout.close();
+				bytes = bout.toByteArray();
+			}
+			int baslinesize = bytes.length;
+			
+			setUp();
+			new BasicOperations().testIndirects();
+			docStore.close();
+			try (ByteArrayOutputStream bout = new ByteArrayOutputStream();
+					ObjectOutputStream oout = new ObjectOutputStream(bout) )
+			{
+				oout.writeObject(docStore);
+				oout.close();
+				bout.close();
+				bytes = bout.toByteArray();
+			}
+			
+			assertTrue("size check", (bytes.length - baslinesize) < 500);
+			
+			try (ByteArrayInputStream bin = new ByteArrayInputStream(bytes);
+					ObjectInputStream ooin = new ObjectInputStream(bin)) 
+			{
+				docStore = (MemoryMappedDocumentStore)ooin.readObject();
+			}
+			
+			PlayerRecord playerRecord = docStore.get(PlayerRecord.class, "Player.Dana");
+			assertEquals("dana", playerRecord.name());
+			CharacterRecord characterRecord = playerRecord.characters().get(0);
+
+			assertEquals("Dananator", characterRecord.name());
+			assertEquals(new BigDecimal(23), characterRecord.getAge());
+		}
+	}
+	
 	@Nested
 	@DisplayName("basic operations") 
 	class BasicOperations {
@@ -107,7 +161,7 @@ class TestMemoryMappedDocumentStore {
 		}
 		
 		@Test
-		@DisplayName("indirects")
+		@DisplayName("indirects and serialized types")
 		void testIndirects() {
 			// create an instance via new instance
 			CharacterRecord characterRecord = 
@@ -116,7 +170,8 @@ class TestMemoryMappedDocumentStore {
 						.as(CharacterRecord.class)
 						.usingName("Dananator")
 						.characterClass("Engineer")
-						.withLevel(50); // its vanilla people
+						.withLevel(50) // its vanilla people
+						.setAge(new BigDecimal(23));
 			
 			PlayerRecord playerRecord = 
 					docStore
@@ -133,6 +188,7 @@ class TestMemoryMappedDocumentStore {
 			docStore.put(playerRecord);
 			
 			assertEquals("Dananator", playerRecord.characters().get(0).name());
+			assertEquals(new BigDecimal(23), playerRecord.characters().get(0).getAge());
 
 		}
 
@@ -227,7 +283,7 @@ class TestMemoryMappedDocumentStore {
 	
 	
 	@Nested
-	@DisplayName("serialization")
+	@DisplayName("document serialization")
 	class Serialization {
 		private DelegateDocumentStore delegateDocStore;
 		
