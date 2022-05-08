@@ -17,38 +17,42 @@ public interface Equity extends DocumentView {
 
 	public interface Year extends DocumentView {
 
-		/** per day data, keyed by MONTH_OF_YEAR_2+DAY_OF_MONTH_2 , ie 0101 */
+		/** per day data, keyed by DAY_OF_YEAR (0 to 365) */
 		@Indirect @Getter("days") Map<String, Day> days();
 
 	}
 
-	public interface Day extends Candle {
+	public interface Day extends Metric {
 
-		/** the list of "market open" 1 minute candles, minute 0 is the candle that goes from 930am to 931am */
-		@Getter("candles") List<Candle> candles();
+		/** 930am to 4pm (330 minutes) */
+		@Getter("minutes") List<Metric> minutes();
 
-		/** the list of premarket candles */
-		@Getter("premarket") List<Candle> premarket();
+		/** 4am to 930am (330 minutes) */
+		@Getter("premarket") List<Metric> premarket();
 		
-		/** the list of postmarket candles */
-		@Getter("postmarket") List<Candle> postmarket();
+		/** 4pm tp 8pm (240 minutes) */
+		@Getter("postmarket") List<Metric> postmarket();
 
 	}
 
-	public interface Candle extends DocumentView {
+	public interface Metric extends DocumentView {
+
+		@Getter("v") Float [] values();
+		@Setter("v") Float [] values(Float [] values);
 		
-		@Getter("values") Float [] value();
-		@Setter("values") Float [] value(Float [] values);
+		@Getter("t") Map<String,Float []> technicals();
 
 	}
 
-	public interface Constants {
+	public interface MetricConstants {
 		public static final int OPEN = 0;
 		public static final int HIGH = 1;
 		public static final int LOW = 2;
 		public static final int CLOSE = 3;
 		public static final int VOLUME = 4;
 		public static final int AVERAGE = 5;
+
+		public static final int _COUNT = 6;
 	}
 
 }
