@@ -70,13 +70,13 @@ public class JChart extends JComponent {
 		// calculate scale
 		float max = 0f;
 		Float min = 0f;
-		float xScale = (float) (g.getClipBounds().getX()/s.size());
+		float xScale = (float) (g.getClipBounds().getWidth()/s.size());
 		for (int i = 0; i < s.size(); i++) {
 			Float [] values = (Float [])s.get(i);
 			min = Math.min(min, Math.min(values[Candle.LOW.value], values[Candle.VWAP.value]));
 			max = Math.max(max, Math.max(values[Candle.HIGH.value], values[Candle.VWAP.value]));
 		}
-		float yScale = 1f / ( max - min );
+		float yScale = (float)g.getClipBounds().getHeight() / ( max - min );
 
 		Graphics2D g2d = (Graphics2D)g;
 		for (int i = 0; i < s.size(); i++) {
