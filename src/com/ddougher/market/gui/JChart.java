@@ -1,15 +1,23 @@
 package com.ddougher.market.gui;
 
+import java.awt.BasicStroke;
+import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Stroke;
 import java.awt.geom.Line2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.util.LinkedHashSet;
 
+import javax.swing.BorderFactory;
 import javax.swing.JComponent;
+import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
 
+import com.ddougher.market.AbstractChartSequence;
 import com.ddougher.market.ChartSequence;
 import com.ddougher.market.data.MetricConstants.Candle;
 
@@ -26,6 +34,11 @@ public class JChart extends JComponent {
 	
 	public JChart() {
 		super();
+	}
+
+	public <T> JChart(ChartSequence<T> sequence) {
+		this();
+		addChartSequence(sequence);
 	}
 
 	public <T> void addChartSequence(ChartSequence<T> sequence) {
@@ -68,8 +81,8 @@ public class JChart extends JComponent {
 	void paintSequence(Graphics g, ChartSequence s) {
 
 		// calculate scale
-		float max = 0f;
-		Float min = 0f;
+		float max = s.size() > 0 ? Integer.MIN_VALUE: 100;
+		float min = s.size() > 0 ? Integer.MAX_VALUE: 0;
 		float xScale = (float) (g.getClipBounds().getWidth()/s.size());
 		for (int i = 0; i < s.size(); i++) {
 			Float [] values = (Float [])s.get(i);
@@ -79,27 +92,32 @@ public class JChart extends JComponent {
 		float yScale = (float)g.getClipBounds().getHeight() / ( max - min );
 
 		Graphics2D g2d = (Graphics2D)g;
+		
 		for (int i = 0; i < s.size(); i++) {
 			Float [] values = (Float [])s.get(i);
 			Color foreground = g2d.getColor();
 
+			
 			// draw the stick
+			Stroke stroke = g2d.getStroke();
+			g2d.setStroke(new BasicStroke(2.0f));
 			g2d.draw
 			(
 					new Line2D.Float
 					(
 							new Point2D.Float
 							(
-									i*xScale, 
+									(i+.5f)*xScale, 
 									(max-values[Candle.LOW.value])*yScale
 							), 
 							new Point2D.Float
 							(
-									i*xScale, 
+									(i+.5f)*xScale, 
 									(max-values[Candle.HIGH.value])*yScale
 							)
 					)
 			);
+			g2d.setStroke(stroke);
 
 			// select a candle color
 			
@@ -114,22 +132,49 @@ public class JChart extends JComponent {
 				bottom = values[Candle.CLOSE.value];
 			}
 
+			Rectangle2D.Float candleRect =
+				new Rectangle2D.Float
+				(
+					((float)i+.1f)*xScale,
+					(max - top)*yScale, 
+					.8f*xScale,
+					(top-bottom)*yScale
+				);
+
 			// draw the candle
-			g2d.fill
-			(
-					new Rectangle2D.Float
-					(
-						((float)i -.5f)*xScale,
-						(max - top)*yScale, 
-						1f*xScale,
-						(top-bottom)*yScale
-					)
-			);
-			
+			g2d.fill(candleRect);
 			// set back to foreground color
 			g2d.setColor(foreground);
+			g2d.draw(candleRect);
+			
 			
 		}
 	}
+	
+	public static void main(String [] args) {
+		Float [][] values = new Float [][] { 
+			{3f, 4f, 1f, 2f, 1f, 2.5f},
+			{3f, 5f, 2f, 4f, 1f, 3.5f},
+			{3.2f, 4.7f, .5f, 2.12f, 1f, 2.5f},
+			{3f, 4f, 1f, 2f, 1f, 2.5f},
+			{3f, 4f, 1f, 2f, 1f, 2.5f},
+			{3f, 4f, 1f, 2f, 1f, 2.5f},
+			{3f, 4f, 1f, 2f, 1f, 2.5f}
+		};
+		JFrame f = new JFrame();
+		f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		f.setPreferredSize(new Dimension(500,500));
+		f.getContentPane().setBackground(Color.white);
+		JChart chart= new JChart();
+		chart.addChartSequence(new AbstractChartSequence<Float[]>() {
+			@Override public int size() { return values.length; }
+			@Override public Float[] get( int offset ) { return values[offset]; }
+		});
+		chart.setBackground(Color.white);
+		f.getContentPane().add(chart, BorderLayout.CENTER);
+		f.pack();
+		f.setVisible(true);
+	}
+	
 	
 }
