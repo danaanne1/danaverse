@@ -12,6 +12,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.util.LinkedHashMap;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import javax.swing.JComponent;
@@ -24,7 +25,27 @@ import com.ddougher.market.data.MetricConstants.Candle;
 @SuppressWarnings({"serial","rawtypes", "unchecked"})
 public class JChart extends JComponent {
 
-	LinkedHashMap<ChartSequence, SequencePainter> sequences = new LinkedHashMap<>();
+	class SequenceInfo<T> {
+		SequencePainter<T> sequencePainter;
+		boolean scalesSeparately = false;
+		AffineTransform customTansform = new AffineTransform();
+		/**
+		 * @param sequencePainter
+		 * @param scalesSeparately
+		 * @param customTansform
+		 */
+		public SequenceInfo(
+				Optional<SequencePainter<T>> sequencePainter, 
+				Optional<Boolean> scalesSeparately,
+				Optional<AffineTransform> customTansform) {
+			super();
+			this.sequencePainter = sequencePainter.orElseThrow(()->new IllegalArgumentException());
+			this.scalesSeparately = scalesSeparately.orElse(Boolean.FALSE);
+			this.customTansform = customTansform.orElse(new AffineTransform());
+		}
+	}
+	
+	LinkedHashMap<ChartSequence, SequenceInfo> sequences = new LinkedHashMap<>();
 
 	ChartSequence.Listener chartListener = new ChartSequence.Listener() {
 		public void sizeChanged(com.ddougher.market.ChartSequence.SizeChangedEvent evt) { repaint(); };
@@ -43,12 +64,12 @@ public class JChart extends JComponent {
 	// float xScale = (float) (g.getClipBounds().getWidth()/s.size());
 	// float yScale = (float)g.getClipBounds().getHeight() / ( max - min );
 	
-	public static final SequencePainter BasicLinePainter = new SequencePainter<Float []>() {
+	public static final SequencePainter<Float> BasicLinePainter = new SequencePainter<Float>() {
 		@Override
 		public Point2D.Float getMinMax(ChartSequence s) {
 			// calculate scale
-			float max = s.size() > 0 ? Integer.MIN_VALUE: 100;
-			float min = s.size() > 0 ? Integer.MAX_VALUE: 0;
+			float max = s.size() > 0 ? Float.MIN_VALUE: 100;
+			float min = s.size() > 0 ? Float.MAX_VALUE: 0;
 			for (int i = 0; i < s.size(); i++) {
 				java.lang.Float val = (Float)s.get(i);
 				min = Math.min(min, (float)val);
@@ -93,7 +114,7 @@ public class JChart extends JComponent {
 
 	};
 
-	public static final SequencePainter CandlePainter = new SequencePainter<Float []>() {
+	public static final SequencePainter<Float []> CandlePainter = new SequencePainter<Float []>() {
 		public java.awt.geom.Point2D.Float getMinMax(ChartSequence s) {
 			// calculate scale
 			float max = s.size() > 0 ? Float.MIN_VALUE: 100;
@@ -180,13 +201,13 @@ public class JChart extends JComponent {
 		super();
 	}
 
-	public <T> JChart(ChartSequence<T> sequence, SequencePainter painter) {
+	public <T> JChart(ChartSequence<T> sequence, Optional<SequencePainter<T>> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform  ) {
 		this();
-		addChartSequence(sequence, painter);
+		addChartSequence(sequence, painter, scalesSeparately, customTransform);
 	}
 
-	public <T> void addChartSequence(ChartSequence<T> sequence, SequencePainter painter) {
-		sequences.put(sequence, painter);
+	public <T> void addChartSequence(ChartSequence<T> sequence, Optional<SequencePainter<T>> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform) {
+		sequences.put(sequence, new SequenceInfo<T>(painter, scalesSeparately, customTransform));
 		sequence.addListener(chartListener);
 		repaint();
 	}
@@ -211,6 +232,10 @@ public class JChart extends JComponent {
 		sequences.keySet().forEach(s->s.removeListener(chartListener));
 	}
 	
+	/*
+	 * We pass the transform to the painter because pre-transforming the graphics object will also transform the stroke,
+	 * which results in very off style borders and lines. 
+	 */
 	@Override
 	protected void paintComponent(Graphics g) {
 		super.paintComponent(g);
@@ -220,20 +245,36 @@ public class JChart extends JComponent {
 		AtomicReference<Float> min = new AtomicReference<Float>(Float.MAX_VALUE);
 		AtomicReference<Float> max = new AtomicReference<Float>(Float.MIN_VALUE);
 		AtomicReference<Integer> size = new AtomicReference<Integer>(0);
-		sequences.forEach((s,p)-> {
-			Point2D.Float p2d =  p.getMinMax(s);
-			min.getAndUpdate(f->Math.min(f, p2d.x));
-			max.getAndUpdate(f->Math.max(f, p2d.y));
-			size.getAndUpdate(i->Math.max(i, s.size()));
+		sequences.forEach((s,si)-> {
+			if (!si.scalesSeparately) {
+				Point2D.Float p2d =  si.sequencePainter.getMinMax(s);
+				min.getAndUpdate(f->Math.min(f, p2d.x));
+				max.getAndUpdate(f->Math.max(f, p2d.y));
+				size.getAndUpdate(i->Math.max(i, s.size()));
+			}
 		});
 		float xScale = (float) (g2d.getClipBounds().getWidth()/(float)size.get());
 		float yScale = (float)g2d.getClipBounds().getHeight() / ( max.get() - min.get() );
-
 		AffineTransform at = new AffineTransform();
 		at.scale(xScale, -yScale);
 		at.translate(0, -max.get());
 		
-		sequences.forEach((s,p)->p.PaintSequence(g2d, s, at));
+		sequences.forEach((s,si)-> {
+			if (!si.scalesSeparately) {
+				AffineTransform at1 = new AffineTransform(at);
+				at1.concatenate(si.customTansform);
+				si.sequencePainter.PaintSequence(g2d, s, at1);
+			} else {
+				Point2D.Float p2d =  si.sequencePainter.getMinMax(s);
+				float xScale1 = (float) (g2d.getClipBounds().getWidth()/(float)s.size());
+				float yScale1 = (float)g2d.getClipBounds().getHeight() / ( p2d.y - p2d.x );
+				AffineTransform at1 = new AffineTransform();
+				at1.scale(xScale1, -yScale1);
+				at1.translate(0, -p2d.y);
+				at1.concatenate(si.customTansform);
+				si.sequencePainter.PaintSequence(g2d, s, at1);
+			}
+		});
 
 		
 		g2d.setTransform(t);
@@ -258,11 +299,11 @@ public class JChart extends JComponent {
 		chart.addChartSequence(new AbstractChartSequence<Float[]>() {
 			@Override public int size() { return values.length; }
 			@Override public Float[] get( int offset ) { return values[offset]; }
-		}, CandlePainter);
+		}, Optional.of(CandlePainter), Optional.empty(), Optional.empty());
 		chart.addChartSequence(new AbstractChartSequence<Float>() {
 			@Override public int size() { return values.length; }
 			@Override public Float get( int offset ) { return (values[offset][0]+values[offset][3])/2f; }
-		}, BasicLinePainter);
+		}, Optional.of(BasicLinePainter), Optional.of(Boolean.TRUE), Optional.empty());
 		chart.setBackground(Color.white);
 		f.getContentPane().add(chart, BorderLayout.CENTER);
 		f.pack();
