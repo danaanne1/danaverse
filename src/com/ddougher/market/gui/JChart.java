@@ -8,7 +8,6 @@ import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.Paint;
 import java.awt.Stroke;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Line2D;
@@ -32,6 +31,7 @@ public class JChart extends JComponent {
 		SequencePainter<T> sequencePainter;
 		boolean scalesSeparately = false;
 		AffineTransform customTansform = new AffineTransform();
+		Composite composite = null;
 		/**
 		 * @param sequencePainter
 		 * @param scalesSeparately
@@ -40,11 +40,13 @@ public class JChart extends JComponent {
 		public SequenceInfo(
 				Optional<SequencePainter<T>> sequencePainter, 
 				Optional<Boolean> scalesSeparately,
-				Optional<AffineTransform> customTansform) {
+				Optional<AffineTransform> customTansform,
+				Optional<Composite> composite) {
 			super();
 			this.sequencePainter = sequencePainter.orElseThrow(()->new IllegalArgumentException());
 			this.scalesSeparately = scalesSeparately.orElse(Boolean.FALSE);
 			this.customTansform = customTansform.orElse(new AffineTransform());
+			this.composite = composite.orElse(null);
 		}
 	}
 	
@@ -208,9 +210,7 @@ public class JChart extends JComponent {
 			Stroke stroke_old = g2d.getStroke();
 			Stroke stickStroke = new BasicStroke(2f);
 			g2d.setStroke(stickStroke);
-			Composite composite = g2d.getComposite();
 			
-			g2d.setComposite(AlphaComposite.SrcOver.derive(.5f));
 			for (int i = 0; i < s.size(); i++) {
 				Float val = (Float)s.get(i);
 				Color foreground = g2d.getColor();
@@ -234,7 +234,6 @@ public class JChart extends JComponent {
 				// set back to foreground color
 				g2d.draw(candleRect);
 			}
-			g2d.setComposite(composite);
 			g2d.setStroke(stroke_old);
 			
 		}
@@ -244,13 +243,13 @@ public class JChart extends JComponent {
 		super();
 	}
 
-	public <T> JChart(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform  ) {
+	public <T> JChart(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform , Optional<Composite> composite ) {
 		this();
-		addChartSequence(sequence, painter, scalesSeparately, customTransform);
+		addChartSequence(sequence, painter, scalesSeparately, customTransform, composite);
 	}
 
-	public <T> void addChartSequence(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform) {
-		sequences.put(sequence, new SequenceInfo<T>(Optional.of(painter), scalesSeparately, customTransform));
+	public <T> void addChartSequence(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform, Optional<Composite> composite) {
+		sequences.put(sequence, new SequenceInfo<T>(Optional.of(painter), scalesSeparately, customTransform, composite));
 		sequence.addListener(chartListener);
 		repaint();
 	}
@@ -301,8 +300,12 @@ public class JChart extends JComponent {
 		AffineTransform at = new AffineTransform();
 		at.scale(xScale, -yScale);
 		at.translate(0, -max.get());
+
+		Composite composite = g2d.getComposite();
 		
 		sequences.forEach((s,si)-> {
+			if (si.composite!=null)
+				g2d.setComposite(si.composite);
 			if (!si.scalesSeparately) {
 				AffineTransform at1 = new AffineTransform(at);
 				at1.concatenate(si.customTansform);
@@ -317,8 +320,8 @@ public class JChart extends JComponent {
 				at1.concatenate(si.customTansform);
 				si.sequencePainter.PaintSequence(g2d, s, at1);
 			}
+			g2d.setComposite(composite);
 		});
-
 		
 		g2d.setTransform(t);
 	}
@@ -342,15 +345,15 @@ public class JChart extends JComponent {
 		chart.addChartSequence(new AbstractChartSequence<Float[]>() {
 			@Override public int size() { return values.length; }
 			@Override public Float[] get( int offset ) { return values[offset]; }
-		}, CandlePainter, Optional.empty(), Optional.empty());
+		}, CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
 		chart.addChartSequence(new AbstractChartSequence<Float>() {
 			@Override public int size() { return values.length; }
 			@Override public Float get( int offset ) { return (values[offset][0]+values[offset][3])/2f; }
-		}, BasicLinePainter, Optional.empty(), Optional.empty());
+		}, BasicLinePainter, Optional.empty(), Optional.empty(), Optional.empty());
 		chart.addChartSequence(new AbstractChartSequence<Float>() {
 			@Override public int size() { return values.length; }
 			@Override public Float get( int offset ) { return (values[offset][0]+values[offset][3])/2f; }
-		}, BarPainter, Optional.of(Boolean.TRUE), Optional.of(AffineTransform.getScaleInstance(1d, .25d)));
+		}, BarPainter, Optional.of(Boolean.TRUE), Optional.of(AffineTransform.getScaleInstance(1d, .25d)), Optional.of(AlphaComposite.SrcOver.derive(.5f)));
 
 		
 		chart.setBackground(Color.white);
