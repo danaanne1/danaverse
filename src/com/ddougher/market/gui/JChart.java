@@ -1,11 +1,14 @@
 package com.ddougher.market.gui;
 
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Paint;
 import java.awt.Stroke;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Line2D;
@@ -52,17 +55,10 @@ public class JChart extends JComponent {
 		public void valuesChanged(com.ddougher.market.ChartSequence.ValueChangedEvent evt) { repaint(); };
 	};
 	
-//	public interface SequencePainter {
-//		public void paintSequence(Graphics g, ChartSequence<?> seq);
-//	}
-	
 	public interface SequencePainter<T> {
 		public Point2D.Float getMinMax(ChartSequence s);
 		public void PaintSequence(Graphics2D g2d, ChartSequence<T> sequence, AffineTransform t);
 	}
-	
-	// float xScale = (float) (g.getClipBounds().getWidth()/s.size());
-	// float yScale = (float)g.getClipBounds().getHeight() / ( max - min );
 	
 	public static final SequencePainter<Float> BasicLinePainter = new SequencePainter<Float>() {
 		@Override
@@ -196,18 +192,65 @@ public class JChart extends JComponent {
 		}
 	};
 	
+	public static final SequencePainter<Float> BarPainter = new SequencePainter<Float>() {
+		public java.awt.geom.Point2D.Float getMinMax(ChartSequence s) {
+			// calculate scale
+			float max = s.size() > 0 ? Float.MIN_VALUE: 100;
+			float min = s.size() > 0 ? Float.MAX_VALUE: 0;
+			for (int i = 0; i < s.size(); i++) {
+				Float val = (Float)s.get(i);
+				max = Math.max(max, val);
+			}
+			return new Point2D.Float(0f,max);
+		}
+		public void PaintSequence(Graphics2D g2d, ChartSequence<Float> s, AffineTransform t) {
+			
+			Stroke stroke_old = g2d.getStroke();
+			Stroke stickStroke = new BasicStroke(2f);
+			g2d.setStroke(stickStroke);
+			Composite composite = g2d.getComposite();
+			
+			g2d.setComposite(AlphaComposite.SrcOver.derive(.5f));
+			for (int i = 0; i < s.size(); i++) {
+				Float val = (Float)s.get(i);
+				Color foreground = g2d.getColor();
+	
+				Point2D topLeft = t.transform(new Point2D.Float(((float)i+.2f),val),null);
+				Point2D bottomRight = t.transform(new Point2D.Float(((float)i+.8f),0f),null);
+					
+				Rectangle2D.Double candleRect =
+					new Rectangle2D.Double
+					(
+						topLeft.getX(),
+						topLeft.getY(), 
+						Math.abs(bottomRight.getX()-topLeft.getX()),
+						Math.abs(bottomRight.getY()-topLeft.getY())
+					);
+				
+				g2d.setBackground(new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 50));
+				
+				// draw the candle
+				g2d.fill(candleRect);
+				// set back to foreground color
+				g2d.draw(candleRect);
+			}
+			g2d.setComposite(composite);
+			g2d.setStroke(stroke_old);
+			
+		}
+	};
 	
 	public JChart() {
 		super();
 	}
 
-	public <T> JChart(ChartSequence<T> sequence, Optional<SequencePainter<T>> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform  ) {
+	public <T> JChart(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform  ) {
 		this();
 		addChartSequence(sequence, painter, scalesSeparately, customTransform);
 	}
 
-	public <T> void addChartSequence(ChartSequence<T> sequence, Optional<SequencePainter<T>> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform) {
-		sequences.put(sequence, new SequenceInfo<T>(painter, scalesSeparately, customTransform));
+	public <T> void addChartSequence(ChartSequence<T> sequence, SequencePainter<T> painter, Optional<Boolean> scalesSeparately, Optional<AffineTransform> customTransform) {
+		sequences.put(sequence, new SequenceInfo<T>(Optional.of(painter), scalesSeparately, customTransform));
 		sequence.addListener(chartListener);
 		repaint();
 	}
@@ -299,11 +342,17 @@ public class JChart extends JComponent {
 		chart.addChartSequence(new AbstractChartSequence<Float[]>() {
 			@Override public int size() { return values.length; }
 			@Override public Float[] get( int offset ) { return values[offset]; }
-		}, Optional.of(CandlePainter), Optional.empty(), Optional.empty());
+		}, CandlePainter, Optional.empty(), Optional.empty());
 		chart.addChartSequence(new AbstractChartSequence<Float>() {
 			@Override public int size() { return values.length; }
 			@Override public Float get( int offset ) { return (values[offset][0]+values[offset][3])/2f; }
-		}, Optional.of(BasicLinePainter), Optional.of(Boolean.TRUE), Optional.empty());
+		}, BasicLinePainter, Optional.empty(), Optional.empty());
+		chart.addChartSequence(new AbstractChartSequence<Float>() {
+			@Override public int size() { return values.length; }
+			@Override public Float get( int offset ) { return (values[offset][0]+values[offset][3])/2f; }
+		}, BarPainter, Optional.of(Boolean.TRUE), Optional.of(AffineTransform.getScaleInstance(1d, .25d)));
+
+		
 		chart.setBackground(Color.white);
 		f.getContentPane().add(chart, BorderLayout.CENTER);
 		f.pack();
