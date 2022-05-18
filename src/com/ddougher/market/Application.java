@@ -1,11 +1,20 @@
-package com.ddougher.market.gui;
+package com.ddougher.market;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.util.Optional;
+import java.util.prefs.Preferences;
 
 import javax.swing.AbstractAction;
 import javax.swing.JDesktopPane;
@@ -13,23 +22,84 @@ import javax.swing.JFrame;
 import javax.swing.JInternalFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
-import javax.swing.JMenuItem;
-import javax.swing.JRootPane;
+
+import com.ddougher.proxamic.MemoryMappedDocumentStore;
 
 public class Application {
 	
 	View view = new View();
 	Controller controller = new Controller();
+	MemoryMappedDocumentStore docStore;
+	Preferences rootPrefs = Preferences.userNodeForPackage(getClass());
+	
+	static class Constants {
+		static final String DOC_STORE_BASE_PATH_KEY = "basePath";
+		static final String DOC_STORE_DEFAULT_FOLDER_NAME = System.getProperty("user.home") + File.separator + String.join(File.separator, "Documents", "DanaTrade", "Data");
+	}
 	
 	/** Where all the actions go */
 	class Controller {
 		
+
+
 		void launchApplication() {
+			loadDocumentStore();
 			view.mainFrame().setVisible(true);
 		}
+
+		
+		void launchBackgroundProcess() {
+			
+		}
+		
 		
 		void exitApplication() {
+			saveDocumentStore();
 			System.exit(0);
+		}
+
+		private void loadDocumentStore() {
+			Preferences dsp = rootPrefs.node("DocStore");
+			File path = new File(dsp.get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME));
+			path.mkdirs();
+
+			File docStoreFile = new File(path,"Database.dt1");
+			if (docStoreFile.exists()) {
+				try (   FileInputStream fin = new FileInputStream(docStoreFile); 
+						BufferedInputStream bin = new BufferedInputStream(fin);
+						ObjectInputStream oin = new ObjectInputStream(bin)) {
+					docStore = (MemoryMappedDocumentStore)oin.readObject();
+				} catch (Exception e) {
+					docStore = null;
+				}
+			} 
+
+			if (docStore == null) {
+				docStore = 
+					new MemoryMappedDocumentStore
+					(
+							Optional.of(dsp.get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME)),	
+							Optional.empty(),
+							Optional.empty(), 
+							Optional.empty(), 
+							Optional.empty()
+					);
+			}
+		}
+
+		private void saveDocumentStore() {
+			Preferences dsp = rootPrefs.node("DocStore");
+			File path = new File(dsp.get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME));
+			path.mkdirs();
+			File docStoreFile = new File(path,"Database.dt1");
+			try (	FileOutputStream fout = new FileOutputStream(docStoreFile); 
+					BufferedOutputStream bout = new BufferedOutputStream(fout);
+					ObjectOutputStream oout = new ObjectOutputStream(bout) ) {
+				oout.writeObject(docStore);
+				oout.flush();
+			} catch (Exception e) {
+				// show an error dialog
+			}
 		}
 	}
 	
@@ -79,6 +149,12 @@ public class Application {
 				@Override
 				public void actionPerformed(ActionEvent e) {
 					desktopPane.add(chartFrame(),0);
+				}
+			});
+			tools.add(new AbstractAction("Launch Background Process") {
+				@Override
+				public void actionPerformed(ActionEvent e) {
+					controller.launchBackgroundProcess();
 				}
 			});
 			return tools;
