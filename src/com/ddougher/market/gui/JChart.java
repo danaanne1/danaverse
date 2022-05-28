@@ -254,6 +254,12 @@ public class JChart extends JComponent {
 		repaint();
 	}
 	
+	public void clearChartSequences() {
+		sequences.keySet().forEach(cs->cs.removeListener(chartListener));
+		sequences.clear();
+		repaint();
+	}
+	
 	public <T> void removeChartSequence(ChartSequence<T> sequence) {
 		if (!sequences.containsKey(sequence)) 
 			return;

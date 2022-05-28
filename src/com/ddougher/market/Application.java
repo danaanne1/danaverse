@@ -7,6 +7,8 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.BufferedInputStream;
@@ -24,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.prefs.Preferences;
 
 import javax.net.ssl.HttpsURLConnection;
@@ -270,11 +273,39 @@ public class Application {
 		}
 		
 		private JPanel chartControl(JChart chart) {
-			
+			AtomicReference<ChartSequence<?>> sequence = new AtomicReference<ChartSequence<?>>();
 			JPanel p = new JPanel(new GridBagLayout());
-			JComboBox<String> combo = new JComboBox<String>();
-			combo.setEditable(true);
+			JComboBox<String> combo = 
+				new JComboBox<String>(
+					docStore.get(Stocks.class, "stocks")
+						.families()
+						.values()
+						.stream()
+						.flatMap(fam->fam.active().keySet().stream())
+						.sorted()
+						.toArray(i->new String[i])
+				);
+
+			combo.setEditable(false);
 			combo.setPrototypeDisplayValue("2022/07/10 TWTR/A C 87.00");
+			combo.addItemListener(ie->{
+				ChartSequence<?> seq = sequence.get();
+				if (seq!=null) chart.removeChartSequence(seq);
+				ChartSequence<Float []> candles = new AbstractChartSequence<Float []>() {
+					@Override
+					public int size() {
+						// TODO Auto-generated method stub
+						return 0;
+					}
+
+					@Override
+					public Float[] get(int offset) {
+						// TODO Auto-generated method stub
+						return null;
+					}
+				};
+				chart.addChartSequence(null, JChart.CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
+			});
 			p.add(combo, new GridBagConstraints(0, 0, 1, 1, 0, 1, GridBagConstraints.CENTER, GridBagConstraints.NONE, new Insets(0,0,0,0), 0, 0));
 			p.add(new JPanel(),  new GridBagConstraints(GridBagConstraints.RELATIVE, 0, GridBagConstraints.REMAINDER, 1, 1, 1, GridBagConstraints.CENTER, GridBagConstraints.NONE, new Insets(0,0,0,0), 0, 0));
 			return p;

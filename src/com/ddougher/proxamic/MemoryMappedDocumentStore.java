@@ -4,13 +4,20 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.ConcurrentModificationException;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import com.ddougher.proxamic.DocumentListener.DocumentEvent;
 import com.ddougher.util.AssetFactory.Addressable;
 import com.ddougher.util.MemoryMappedAssetFactory;
 import com.theunknowablebits.proxamic.AbstractDocumentStore;
@@ -30,6 +37,8 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 	private static final long serialVersionUID = 1L;
 	MemoryMappedAssetFactory assetFactory;
 	ConcurrentNavigableMap<String, Record> index;
+	Map<String, Set<DocumentListener>> observers;
+	
 	
 	private class Record implements Serializable {
 		private static final long serialVersionUID = 1L;
@@ -64,14 +73,32 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		super(docFromNothing, docFromBytes, idSupplier);
 		assetFactory = new MemoryMappedAssetFactory(basePath, blockSize);
 		index = new ConcurrentSkipListMap<String, Record>();
+		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<DocumentListener>>());
 	}
 
 	public MemoryMappedDocumentStore() {
 		super();
 		assetFactory = new MemoryMappedAssetFactory();
 		index = new ConcurrentSkipListMap<String, Record>();
+		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<DocumentListener>>());
 	}
 	
+	public void addDocumentListener(String docId, DocumentListener listener) {
+		synchronized(observers) {
+			if (!observers.containsKey(docId))
+				observers.put(docId, new CopyOnWriteArraySet<DocumentListener>());
+			observers.get(docId).add(listener);
+		}
+	}
+
+	public void removeDocumentListener(String docId, DocumentListener listener) {
+		synchronized(observers) {
+			if (!observers.containsKey(docId))
+				observers.put(docId, new CopyOnWriteArraySet<DocumentListener>());
+			observers.get(docId).remove(listener);
+		}
+	}
+
 	@Override
 	public void close() throws IOException {
 		assetFactory.close();
@@ -133,6 +160,11 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 			
 			document.as(MemoryMappedDocument.class).withVERSION(storageRecord.versionNumber);
 		}
+		DocumentEvent evt = new DocumentEvent(this, docId);
+		observers
+			.getOrDefault(docId, Collections.emptySet())
+			.parallelStream()
+			.forEach(o -> o.documentPut(evt));
 	}
 
 	@Override
@@ -149,6 +181,11 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 			index.remove(docId);
 			storageRecord.addressable.free();
 		}
+		DocumentEvent evt = new DocumentEvent(this, docId);
+		observers
+			.getOrDefault(docId, Collections.emptySet())
+			.parallelStream()
+			.forEach(o -> o.documentDeleted(evt));
 	}
 	
 	@Override
