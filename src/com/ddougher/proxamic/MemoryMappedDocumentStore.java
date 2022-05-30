@@ -16,7 +16,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-import com.ddougher.proxamic.DocumentListener.DocumentEvent;
+import com.ddougher.proxamic.ObservableDocumentStore.Listener.DocumentEvent;
 import com.ddougher.util.AssetFactory.Addressable;
 import com.ddougher.util.MemoryMappedAssetFactory;
 import com.theunknowablebits.proxamic.AbstractDocumentStore;
@@ -31,12 +31,12 @@ import com.theunknowablebits.proxamic.Setter;
  * 
  * @author Dana
  */
-public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Serializable, Closeable {
+public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Serializable, Closeable, ObservableDocumentStore {
 
 	private static final long serialVersionUID = 1L;
 	MemoryMappedAssetFactory assetFactory;
 	ConcurrentNavigableMap<String, Record> index;
-	Map<String, Set<DocumentListener>> observers;
+	Map<String, Set<Listener>> observers;
 	
 	
 	private class Record implements Serializable {
@@ -72,28 +72,30 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		super(docFromNothing, docFromBytes, idSupplier);
 		assetFactory = new MemoryMappedAssetFactory(basePath, blockSize);
 		index = new ConcurrentSkipListMap<String, Record>();
-		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<DocumentListener>>());
+		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<Listener>>());
 	}
 
 	public MemoryMappedDocumentStore() {
 		super();
 		assetFactory = new MemoryMappedAssetFactory();
 		index = new ConcurrentSkipListMap<String, Record>();
-		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<DocumentListener>>());
+		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<Listener>>());
 	}
 	
-	public void addDocumentListener(String docId, DocumentListener listener) {
+	@Override
+	public void addListener(String docId, Listener listener) {
 		synchronized(observers) {
 			if (!observers.containsKey(docId))
-				observers.put(docId, new CopyOnWriteArraySet<DocumentListener>());
+				observers.put(docId, new CopyOnWriteArraySet<Listener>());
 			observers.get(docId).add(listener);
 		}
 	}
 
-	public void removeDocumentListener(String docId, DocumentListener listener) {
+	@Override
+	public void removeListener(String docId, Listener listener) {
 		synchronized(observers) {
 			if (!observers.containsKey(docId))
-				observers.put(docId, new CopyOnWriteArraySet<DocumentListener>());
+				observers.put(docId, new CopyOnWriteArraySet<Listener>());
 			observers.get(docId).remove(listener);
 		}
 	}

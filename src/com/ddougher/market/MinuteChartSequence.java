@@ -1,16 +1,17 @@
 package com.ddougher.market;
 
 import java.io.Closeable;
-import java.lang.ref.WeakReference;
-import java.util.Collections;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TimeZone;
 
 import com.ddougher.market.data.Equity;
+import com.ddougher.market.data.Equity.Day;
 import com.ddougher.market.data.MetricConstants;
-import com.ddougher.proxamic.DocumentListener;
 import com.ddougher.proxamic.MemoryMappedDocumentStore;
+import com.ddougher.proxamic.ObservableDocumentStore;
 import com.theunknowablebits.proxamic.DocumentStore;
 import com.theunknowablebits.proxamic.DocumentStoreAware;
 
@@ -39,7 +40,7 @@ public class MinuteChartSequence extends AbstractChartSequence<Float[]> implemen
 	boolean postmarket = true;
 	int minutesperDay = ((premarket==true)?330:0 ) + 390 + ((postmarket==true)?240:0);
 	
-	Map<String, DocumentListener> listeners = new HashMap<String, DocumentListener>();
+	Map<String, ObservableDocumentStore.Listener> listeners = new HashMap<String, ObservableDocumentStore.Listener>();
 
 	/* TODO: The current day always gets a listener */
 	public MinuteChartSequence(Equity equity, String metricName, Date startTime, int length, boolean preMarket, boolean postMarket) {
@@ -52,15 +53,46 @@ public class MinuteChartSequence extends AbstractChartSequence<Float[]> implemen
 		this.postmarket = postMarket;
 		this.metricName = metricName;
 		this.source = equity;
+		
+		Utils.withObservableDocStoreFromDocument(equity.document(), ds ->{
+			Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+			ds.addListener(
+					ds.getID(
+							equity
+								.metric(metricName)
+								.year(c.get(Calendar.YEAR))
+								.day(MetricConstants.tradingDayFromDate(c.getTime()))
+								.document()
+					),
+					new ObservableDocumentStore.Listener() {
+						// the chart is expected to redraw its entirety in response to these events:
+						@Override public void documentPut(DocumentEvent event) { 
+							Day d = event.document().as(Day.class);
+							int diff = (d.minutes().size() + (preMarket?d.premarket().size():0) + (postmarket?d.postmarket().size():0)) - length;
+							if (length > 0)
+								fireValueChangedEvent(length-1, 1);
+							if (diff != 0) {
+								MinuteChartSequence.this.length += diff;
+								fireSizeChangedEvent(diff);
+							}
+						}
+						@Override public void documentDeleted(DocumentEvent event) { /* ignored*/ }
+					}
+			);
+			
+		});
+			
+		
 	}
 
+	@SuppressWarnings("resource")
 	public void close() {
 		if (!DocumentStoreAware.class.isAssignableFrom(source.document().getClass())) return;
 		DocumentStore store = ((DocumentStoreAware)source.document()).getDocumentStore();
-		if (!MemoryMappedDocumentStore.class.isAssignableFrom(store.getClass())) return;
-		MemoryMappedDocumentStore mds = (MemoryMappedDocumentStore)store;
+		if (!ObservableDocumentStore.class.isAssignableFrom(store.getClass())) return;
+		ObservableDocumentStore mds = (MemoryMappedDocumentStore)store;
 		synchronized(listeners) {
-			listeners.forEach((key,value)-> mds.removeDocumentListener(key, value));
+			listeners.forEach((key,value)-> mds.removeListener(key, value));
 			listeners.clear();
 		}
 	}

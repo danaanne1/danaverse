@@ -40,16 +40,17 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 import javax.swing.event.InternalFrameAdapter;
 import javax.swing.event.InternalFrameEvent;
 
 import com.ddougher.market.data.Equity;
 import com.ddougher.market.data.Stocks;
-import com.ddougher.market.data.Stocks.Family;
 import com.ddougher.market.gui.JChart;
 import com.ddougher.proxamic.MemoryMappedDocumentStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.theunknowablebits.proxamic.DocumentStore;
 
 public class Application {
 	
@@ -75,65 +76,47 @@ public class Application {
 		}
 
 		void backfillTickers() {
-			reportingExceptionsAsAlerts(() -> {
-				URL url = new URL("https://api.polygon.io/v3/reference/tickers?type=CS&market=stocks&active=true&sort=ticker&order=asc&limit=1000&apiKey=" + System.getenv("POLYGON_API_KEY"));
-				while (url != null) {
-					JsonNode root = readFromURL(url);
-					for (JsonNode result: root.get("results")) { 
-						saveResultToSymbol(result);
+			new Thread(()->{
+				reportingExceptionsAsAlerts(() -> {
+					URL url = new URL("https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&sort=ticker&order=asc&limit=1000&apiKey=" + System.getenv("POLYGON_API_KEY"));
+					while (url != null) {
+						JsonNode root = readFromURL(url);
+						docStore.transact(ds->{
+							Stocks stocks = ds.get(Stocks.class, "stocks");
+							for (JsonNode result: root.get("results")) { 
+								saveResultToSymbol(result, ds, stocks);
+							}
+							ds.put(stocks);
+						});
+	
+						url = null;
+						if (root.hasNonNull("next_url")) { 
+							url = new URL(root.get("next_url").asText()+"&apiKey="+System.getenv("POLYGON_API_KEY"));
+						}
+						System.out.println("Backfill Sleeping on API");
+						Thread.sleep(12000); // 5 api calls a minute
 					}
-
-					url = null;
-					if (root.hasNonNull("next_url")) { 
-						url = new URL(root.get("next_url").asText()+"&apiKey="+System.getenv("POLYGON_API_KEY"));
-					}
-
-					Thread.sleep(12000); // 5 api calls a minute
-				}
-			});
+				});
+			}).run();
 		}
 
-		private void saveResultToSymbol(JsonNode result) {
-			docStore.transact((ds)->{
-				String ticker = result.get("ticker").asText();
-				boolean isActive = result.get("active").asBoolean();
-				
-				Stocks stocks = ds.get(Stocks.class, "stocks");
-				Family family = stocks.family(result.get("type").asText());
-				Map<String,Equity> actives = family.active();
-				Map<String,Equity> inactives = family.inactive();
+		private void saveResultToSymbol(JsonNode result, DocumentStore ds, Stocks stocks) {
+			System.out.println(result.toString());
+			String ticker = result.get("ticker").asText();
+			Map<String,Equity> tickers = stocks.tickers();
+			Equity e = null;
+			e = tickers.get(ticker);
+			if (e==null) 
+				tickers.put(ticker, e = ds.newInstance(Equity.class));
+			e
+				.withSymbol(ticker)
+				.withName(result.get("name").asText())
+				.withExchange(result.has("primary_exchange")?result.get("primary_exchange").asText():"")
+				.withLocale(result.has("locale")?result.get("locale").asText():"")
+				.withType(result.has("type")?result.get("type").asText():"")
+				.withActive(result.get("active").asBoolean());
 
-				Equity e = null;
-				if (isActive) {
-					if (inactives.containsKey(ticker)) {
-						actives.put(ticker, inactives.get(ticker));
-						inactives.remove(ticker);
-					}
-					e = actives.get(ticker);
-					if (e==null) 
-						actives.put(ticker, e = ds.newInstance(Equity.class));
-				} else {
-					if (actives.containsKey(ticker)) {
-						inactives.put(ticker, actives.get(ticker));
-						actives.remove(ticker);
-					}
-					e = inactives.get(ticker);
-					if (e==null) 
-						inactives.put(ticker, e = ds.newInstance(Equity.class));
-				}
-				
-				e
-					.withSymbol(ticker)
-					.withName(result.get("name").asText())
-					.withExchange(result.get("primary_exchange").asText())
-					.withLocale(result.get("locale").asText())
-					.withType(result.get("type").asText())
-					.withActive(result.get("active").asBoolean());
-
-				ds.put(e);
-				ds.put(family);
-				ds.put(stocks);
-			});
+			ds.put(e);
 		}
 		
 		private JsonNode readFromURL(URL url) throws IOException {
@@ -141,7 +124,7 @@ public class Application {
 			con.setRequestMethod("GET");
 			con.setRequestProperty("Accept","application/json");
 			if (con.getResponseCode()!=200) {
-				JOptionPane.showMessageDialog(view.desktopPane, con.getResponseMessage(), null, JOptionPane.ERROR_MESSAGE);
+				JOptionPane.showMessageDialog(view.desktopPane, con.getResponseMessage().toString(), null, JOptionPane.ERROR_MESSAGE);
 				con.disconnect();
 				return null;
 			}
@@ -282,10 +265,9 @@ public class Application {
 			JComboBox<String> combo = 
 				new JComboBox<String>(
 					docStore.get(Stocks.class, "stocks")
-						.families()
-						.values()
+						.tickers()
+						.keySet()
 						.stream()
-						.flatMap(fam->fam.active().keySet().stream())
 						.sorted()
 						.toArray(i->new String[i])
 				);
@@ -298,14 +280,12 @@ public class Application {
 				c.set(Calendar.MINUTE, 0);
 				c.clear(Calendar.SECOND);
 				c.clear(Calendar.MILLISECOND);
-				for (Family f: docStore.get(Stocks.class, "stocks").families().values()) {
-					Equity e;
-					if (null!=(e=f.active().get(ie.getItem()))) {
-						sequence.set(new MinuteChartSequence(e, "ohlc", c.getTime(), 0, true, true));
-						chart.addChartSequence((ChartSequence<Float []>)sequence.get(), JChart.CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
-						return;
-					}
-				}
+				ChartSequence<Float []> seq = sequence.get();
+				if (seq != null)
+					chart.removeChartSequence(sequence.get());
+				Equity e = docStore.get(Stocks.class, "stocks").tickers().get(ie.getItem());
+				sequence.set(new MinuteChartSequence(e, "ohlc", c.getTime(), 0, true, true));
+				chart.addChartSequence(sequence.get(), JChart.CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
 			});
 			iframe.addInternalFrameListener(new InternalFrameAdapter() {
 				@Override public void internalFrameClosing(InternalFrameEvent e) { unloadChartSequence(chart, sequence); }
@@ -334,6 +314,7 @@ public class Application {
 		try {
 			return s.get();
 		} catch (Exception e) {
+			e.printStackTrace(System.err);
 			JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), null, JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
