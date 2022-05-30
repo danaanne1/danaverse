@@ -7,8 +7,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
-import java.awt.event.ItemEvent;
-import java.awt.event.ItemListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.BufferedInputStream;
@@ -22,8 +20,11 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -39,6 +40,8 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.event.InternalFrameAdapter;
+import javax.swing.event.InternalFrameEvent;
 
 import com.ddougher.market.data.Equity;
 import com.ddougher.market.data.Stocks;
@@ -266,14 +269,15 @@ public class Application {
 			JChart chart = new JChart();
 			chart.setBackground(Color.white);
 			iFrame.getContentPane().add(chart, BorderLayout.CENTER);
-			iFrame.getContentPane().add(chartControl(chart), BorderLayout.NORTH);
+			iFrame.getContentPane().add(chartControl(chart, iFrame), BorderLayout.NORTH);
 			iFrame.pack();
 			iFrame.setVisible(true);
 			return iFrame;
 		}
 		
-		private JPanel chartControl(JChart chart) {
-			AtomicReference<ChartSequence<?>> sequence = new AtomicReference<ChartSequence<?>>();
+		@SuppressWarnings({ "resource" })
+		private JPanel chartControl(JChart chart, JInternalFrame iframe) {
+			AtomicReference<ChartSequence<Float []>> sequence = new AtomicReference<ChartSequence<Float []>>();
 			JPanel p = new JPanel(new GridBagLayout());
 			JComboBox<String> combo = 
 				new JComboBox<String>(
@@ -285,30 +289,39 @@ public class Application {
 						.sorted()
 						.toArray(i->new String[i])
 				);
-
 			combo.setEditable(false);
 			combo.setPrototypeDisplayValue("2022/07/10 TWTR/A C 87.00");
 			combo.addItemListener(ie->{
-				ChartSequence<?> seq = sequence.get();
-				if (seq!=null) chart.removeChartSequence(seq);
-				ChartSequence<Float []> candles = new AbstractChartSequence<Float []>() {
-					@Override
-					public int size() {
-						// TODO Auto-generated method stub
-						return 0;
+				unloadChartSequence(chart, sequence);
+				Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+				c.set(Calendar.HOUR_OF_DAY, 4);
+				c.set(Calendar.MINUTE, 0);
+				c.clear(Calendar.SECOND);
+				c.clear(Calendar.MILLISECOND);
+				for (Family f: docStore.get(Stocks.class, "stocks").families().values()) {
+					Equity e;
+					if (null!=(e=f.active().get(ie.getItem()))) {
+						sequence.set(new MinuteChartSequence(e, "ohlc", c.getTime(), 0, true, true));
+						chart.addChartSequence((ChartSequence<Float []>)sequence.get(), JChart.CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
+						return;
 					}
-
-					@Override
-					public Float[] get(int offset) {
-						// TODO Auto-generated method stub
-						return null;
-					}
-				};
-				chart.addChartSequence(null, JChart.CandlePainter, Optional.empty(), Optional.empty(), Optional.empty());
+				}
+			});
+			iframe.addInternalFrameListener(new InternalFrameAdapter() {
+				@Override public void internalFrameClosing(InternalFrameEvent e) { unloadChartSequence(chart, sequence); }
 			});
 			p.add(combo, new GridBagConstraints(0, 0, 1, 1, 0, 1, GridBagConstraints.CENTER, GridBagConstraints.NONE, new Insets(0,0,0,0), 0, 0));
 			p.add(new JPanel(),  new GridBagConstraints(GridBagConstraints.RELATIVE, 0, GridBagConstraints.REMAINDER, 1, 1, 1, GridBagConstraints.CENTER, GridBagConstraints.NONE, new Insets(0,0,0,0), 0, 0));
 			return p;
+		}
+
+		private void unloadChartSequence(JChart chart, AtomicReference<ChartSequence<Float[]>> sequence) {
+			ChartSequence<Float []> seq = sequence.get();
+			if (seq!=null) {
+				((MinuteChartSequence)seq).close();
+				chart.removeChartSequence(seq);
+				sequence.set(null);
+			}
 		}
 		
 	}
