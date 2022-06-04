@@ -19,10 +19,10 @@ public final class Utils {
 
 	public static <T> T withObservableDocStoreFromDocument(Document document, Function<ObservableDocumentStore, T> f) {
 		if (!DocumentStoreAware.class.isAssignableFrom(document.getClass()))
-			return null;
+			throw new IllegalArgumentException("document is not an DocumentStoreAware");
 		DocumentStore ds = ((DocumentStoreAware)document).getDocumentStore();
 		if (!ObservableDocumentStore.class.isAssignableFrom(ds.getClass()))
-			return null;
+			throw new IllegalArgumentException("documents DocumentStore is not an ObservableDocumentStore");
 		return f.apply((ObservableDocumentStore)ds);
 	}
 

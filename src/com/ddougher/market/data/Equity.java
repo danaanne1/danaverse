@@ -50,12 +50,8 @@ public interface Equity extends DocumentView {
 		@Getter("value") Float [] value();
 
 		@Getter("minutes") List<Float []> minutes();
-		@Getter("premarket") List<Float []> premarket();
-		@Getter("postmarket") List<Float []> postmarket();
 
 		default Float [] minute(int minute) { return minutes().get(minute); }
-		default Float [] premarket(int minute) { return premarket().get(minute); }
-		default Float [] postmarket(int minute) { return postmarket().get(minute); }
 
 	}
 

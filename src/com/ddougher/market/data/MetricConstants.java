@@ -8,6 +8,16 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class MetricConstants {
 
+	/** number of weekdays per year, starting with 2000 */ 
+	public static final int [] year_days = new int [] { 
+			260, 261, 261, 261, 262, 
+			260, 260, 261, 262, 262, 
+			261, 260, 261, 261, 261, 
+			261, 261, 260, 261, 261, 
+			262, 261, 260, 260, 262,
+			261, 261, 261, 260, 261
+	};
+
 	/** Definitions for the built in candle value array */
 	public enum Candle {
 		OPEN(0, "The starting price"),
@@ -15,7 +25,8 @@ public class MetricConstants {
 		LOW(2, "The lowest price reached"),
 		CLOSE(3, "The ending price"),
 		VOLUME(4, "Number of shares traded"),
-		VWAP(5, "The volume weighted average price");
+		VWAP(5, "The volume weighted average price"),
+		TRADES(6, "The number of trades");
 		
 		public final int value;
 		public final String description;
@@ -33,7 +44,7 @@ public class MetricConstants {
 	public static final Map<String, String []> technicalFieldList = new ConcurrentHashMap<String, String[]>();
 	
 	static {
-		technicalFieldList.put("ohlc", new String []  { "open", "high", "low", "close", "volume", "vwap" } ); // OHLC
+		technicalFieldList.put("ohlc", new String []  { "open", "high", "low", "close", "volume", "vwap", "trades" } ); // OHLC
 	}
 
 	
@@ -92,7 +103,6 @@ public class MetricConstants {
 	public static int tradingMinuteFromDate(Date startTime) {
 		Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
 		c.setTime(startTime);
-		c.setTimeZone(TimeZone.getTimeZone("America/New_York"));
 		int minutes = (c.get(Calendar.HOUR_OF_DAY) * 60) + c.get(Calendar.MINUTE);
 		return Math.min(960, Math.max(0, minutes-240));
 	}
@@ -102,6 +112,21 @@ public class MetricConstants {
 		Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
 		c.setTime(startTime);
 		return c.get(Calendar.YEAR);
+	}
+
+	public static Date previousTradingDate() {
+		Date d = new Date();
+		int year = tradingYearFromDate(d);
+		int day = tradingDayFromDate(d);
+		int minute = tradingMinuteFromDate(d);
+		
+		day =- 1;
+		if (day < 0 ) {
+			year -= 1;
+			day = year_days[year-2000]-1;
+		}
+		
+		return calendarDateFromTradingOffset(year, day, minute);
 	}
 
 	

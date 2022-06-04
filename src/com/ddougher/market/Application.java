@@ -20,8 +20,10 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
@@ -40,11 +42,14 @@ import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.SwingUtilities;
 import javax.swing.event.InternalFrameAdapter;
 import javax.swing.event.InternalFrameEvent;
 
 import com.ddougher.market.data.Equity;
+import com.ddougher.market.data.Equity.Day;
+import com.ddougher.market.data.Equity.Metric;
+import com.ddougher.market.data.Equity.Year;
+import com.ddougher.market.data.MetricConstants;
 import com.ddougher.market.data.Stocks;
 import com.ddougher.market.gui.JChart;
 import com.ddougher.proxamic.MemoryMappedDocumentStore;
@@ -99,6 +104,78 @@ public class Application {
 				});
 			}).run();
 		}
+		
+		void getPreviousDay() {
+			new Thread(()->
+				reportingExceptionsAsAlerts(() -> {
+					int count = 0;
+					for (String ticker : docStore.get(Stocks.class, "stocks").tickers().keySet().stream().sorted().toArray(i->new String[i])) {
+						System.out.println(count + ": Loading previous day results for " + ticker);
+						JsonNode root = readFromURL(new URL(
+								String.format(
+										"https://api.polygon.io/v2/aggs/ticker/%1$ts/range/1/minute/%2$ts/%2$ts?adjusted=true&sort=asc&limit=1000&apiKey=%3$ts",
+										ticker,
+										new SimpleDateFormat("yyyy-MM-dd").format(MetricConstants.previousTradingDate()),
+										System.getenv("POLYGON_API_KEY")
+								)
+						));
+						docStore.transact(ds->{
+							Stocks stocks = ds.get(Stocks.class, "stocks");
+							for (JsonNode result: root.get("results")) { 
+								saveAggsToSymbol(result, ds, stocks, ticker);
+							}
+							ds.put(stocks);
+						});
+						if (count++ > 5) break;
+						Thread.sleep(12000); // 5 api calls a minute
+					}
+				})
+			).run();
+		}
+		
+		private void saveAggsToSymbol(JsonNode result, DocumentStore ds, Stocks stocks, String ticker) {
+
+			Date date = new Date(result.get("t").asLong());
+			String tradingYear = Integer.toString(MetricConstants.tradingYearFromDate(date));
+			String tradingDay = Integer.toString(MetricConstants.tradingDayFromDate(date));
+			int iTradingMinute = MetricConstants.tradingMinuteFromDate(date);
+			if (iTradingMinute > 960) 
+				throw new IllegalArgumentException("Trading minute too big");
+			
+			Equity e = stocks.tickers().get(ticker);
+			Metric ohlc = e.metrics().get("ohlc");
+			if (ohlc == null)
+				e.metrics().put("ohlc", ohlc = ds.newInstance(Metric.class));
+
+			Year year = ohlc.years().get(tradingYear);
+			if (year == null)
+				ohlc.years().put(tradingYear, year = ds.newInstance(Year.class));
+			
+			Day day = year.days().get(tradingDay);
+			if (day == null) 
+				year.days().put(tradingDay, day = ds.newInstance(Day.class));
+			
+			
+			List<Float []> minutes = day.minutes();
+			while (minutes.size() <= iTradingMinute) {
+				minutes.add(new Float[] { 0f, 0f, 0f, 0f, 0f, 0f, 0f  } );
+			}
+			minutes.set(iTradingMinute, new Float [] {
+				Double.valueOf(result.get("o").asDouble()).floatValue(),
+				Double.valueOf(result.get("h").asDouble()).floatValue(),
+				Double.valueOf(result.get("l").asDouble()).floatValue(),
+				Double.valueOf(result.get("c").asDouble()).floatValue(),
+				Double.valueOf(result.get("v").asDouble()).floatValue(),
+				Double.valueOf(result.get("vw").asDouble()).floatValue(),
+				Double.valueOf(result.get("n").asDouble()).floatValue(),
+			});
+
+			ds.put(day);
+			ds.put(year);
+			ds.put(ohlc);
+			ds.put(e);
+		}
+		
 
 		private void saveResultToSymbol(JsonNode result, DocumentStore ds, Stocks stocks) {
 			System.out.println(result.toString());

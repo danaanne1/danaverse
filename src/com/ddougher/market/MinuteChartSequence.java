@@ -20,14 +20,7 @@ import com.theunknowablebits.proxamic.DocumentStoreAware;
 // afterhours hours are 4pm to 8pm (240 minutes)
 // trading day = 330 + 390 + 240 = 960
 public class MinuteChartSequence extends AbstractChartSequence<Float[]> implements Closeable {
-	private static final int [] year_days = new int [] { 
-			260, 261, 261, 261, 262, 
-			260, 260, 261, 262, 262, 
-			261, 260, 261, 261, 261, 
-			261, 261, 260, 261, 261, 
-			262, 261, 260, 260, 262,
-			261, 261, 261, 260, 261
-	};
+	private static final int [] year_days = MetricConstants.year_days;
 	
 	Equity source;
 	String metricName;
@@ -65,10 +58,11 @@ public class MinuteChartSequence extends AbstractChartSequence<Float[]> implemen
 								.document()
 					),
 					new ObservableDocumentStore.Listener() {
+						// TODO: REDO
 						// the chart is expected to redraw its entirety in response to these events:
 						@Override public void documentPut(DocumentEvent event) { 
 							Day d = event.document().as(Day.class);
-							int diff = (d.minutes().size() + (preMarket?d.premarket().size():0) + (postmarket?d.postmarket().size():0)) - length;
+							int diff = 0;
 							if (length > 0)
 								fireValueChangedEvent(length-1, 1);
 							if (diff != 0) {
@@ -104,24 +98,15 @@ public class MinuteChartSequence extends AbstractChartSequence<Float[]> implemen
 		int minute = offset_minutes%minutesperDay;
 		int offset_day  = startDay + (offset_minutes/minutesperDay);
 		int offset_year = startYear;
-		while (offset_day > year_days[offset_year-2000]) {
-			offset_day -= year_days[offset_year-2000];
+		while (offset_day > MetricConstants.year_days[offset_year-2000]) {
+			offset_day -= MetricConstants.year_days[offset_year-2000];
 			offset_year += 1;
 		}
 		
-		if (premarket) {
-			if (minute < 330) {
-				return source.metric(metricName).year(offset_year).day(offset_day).premarket(minute);
-			} 
-			if (minute < 720) {
-				return source.metric(metricName).year(offset_year).day(offset_day).minute(minute-330);
-			}
-			return source.metric(metricName).year(offset_year).day(offset_day).postmarket(minute-720);
+		if (!premarket) {
+			minute += 330;
 		}
-		if (minute < 390) {
-			return source.metric(metricName).year(offset_year).day(offset_day).minute(minute);
-		}
-		return source.metric(metricName).year(offset_year).day(offset_day).postmarket(minute-390);
+		return source.metric(metricName).year(offset_year).day(offset_day).minute(minute);
 	}
 	
 	
