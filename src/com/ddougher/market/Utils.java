@@ -1,7 +1,11 @@
 package com.ddougher.market;
 
+import java.awt.event.ActionEvent;
 import java.util.function.Consumer;
 import java.util.function.Function;
+
+import javax.swing.AbstractAction;
+import javax.swing.Action;
 
 import com.ddougher.proxamic.ObservableDocumentStore;
 import com.theunknowablebits.proxamic.Document;
@@ -26,6 +30,9 @@ public final class Utils {
 		return f.apply((ObservableDocumentStore)ds);
 	}
 
-	
-	
+	@SuppressWarnings("serial")
+	public static Action actionFu(String label, Runnable runnable) { 
+		return new AbstractAction(label) { @Override public void actionPerformed(ActionEvent e) {  runnable.run(); }	};
+	}
+
 }

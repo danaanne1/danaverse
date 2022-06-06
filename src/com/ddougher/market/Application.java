@@ -30,10 +30,12 @@ import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 import java.util.prefs.Preferences;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.swing.AbstractAction;
+import javax.swing.Action;
 import javax.swing.JComboBox;
 import javax.swing.JDesktopPane;
 import javax.swing.JFrame;
@@ -102,7 +104,7 @@ public class Application {
 						Thread.sleep(12000); // 5 api calls a minute
 					}
 				});
-			}).run();
+			}).start();
 		}
 		
 		void getPreviousDay() {
@@ -113,7 +115,7 @@ public class Application {
 						System.out.println(count + ": Loading previous day results for " + ticker);
 						JsonNode root = readFromURL(new URL(
 								String.format(
-										"https://api.polygon.io/v2/aggs/ticker/%1$ts/range/1/minute/%2$ts/%2$ts?adjusted=true&sort=asc&limit=1000&apiKey=%3$ts",
+										"https://api.polygon.io/v2/aggs/ticker/%1$s/range/1/minute/%2$s/%2$s?adjusted=true&sort=asc&limit=1000&apiKey=%3$s",
 										ticker,
 										new SimpleDateFormat("yyyy-MM-dd").format(MetricConstants.previousTradingDate()),
 										System.getenv("POLYGON_API_KEY")
@@ -130,7 +132,7 @@ public class Application {
 						Thread.sleep(12000); // 5 api calls a minute
 					}
 				})
-			).run();
+			).start();
 		}
 		
 		private void saveAggsToSymbol(JsonNode result, DocumentStore ds, Stocks stocks, String ticker) {
@@ -260,7 +262,8 @@ public class Application {
 				oout.writeObject(docStore);
 				oout.flush();
 			} catch (Exception e) {
-				JOptionPane.showOptionDialog(null, e.getMessage(), null, JOptionPane.ERROR_MESSAGE, JOptionPane.DEFAULT_OPTION, null, null, null);
+				e.printStackTrace(System.err);
+				// JOptionPane.showOptionDialog(null, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE, JOptionPane.DEFAULT_OPTION, null, null, null);
 			}
 		}
 	}
@@ -307,21 +310,13 @@ public class Application {
 		private JMenu toolsMenu() {
 			
 			JMenu tools = new JMenu("Tools", false);
-			tools.add(new AbstractAction("Chart") {
-				@Override
-				public void actionPerformed(ActionEvent e) {
-					desktopPane.add(chartFrame(),0);
-				}
-			});
-			tools.add(new AbstractAction("Backfill Tickers") {
-				@Override
-				public void actionPerformed(ActionEvent e) {
-					controller.backfillTickers();
-				}
-			});
+			tools.add(Utils.actionFu("Chart", ()-> desktopPane.add(chartFrame(),0))); 
+			tools.add(Utils.actionFu("Get All Stock Tickers", () -> controller.backfillTickers() ));
+			tools.add(Utils.actionFu("Get Previous Day", () -> controller.getPreviousDay() ));
 			return tools;
 		}
 
+		
 		private JInternalFrame chartFrame() {
 			JInternalFrame iFrame = new JInternalFrame("Charts", true, true, true, false);
 			iFrame.setPreferredSize(new Dimension(200,200));
@@ -392,7 +387,7 @@ public class Application {
 			return s.get();
 		} catch (Exception e) {
 			e.printStackTrace(System.err);
-			JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), null, JOptionPane.ERROR_MESSAGE);
+			JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
 	}

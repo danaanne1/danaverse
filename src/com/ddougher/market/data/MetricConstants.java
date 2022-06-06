@@ -120,7 +120,7 @@ public class MetricConstants {
 		int day = tradingDayFromDate(d);
 		int minute = tradingMinuteFromDate(d);
 		
-		day =- 1;
+		day -= 1;
 		if (day < 0 ) {
 			year -= 1;
 			day = year_days[year-2000]-1;

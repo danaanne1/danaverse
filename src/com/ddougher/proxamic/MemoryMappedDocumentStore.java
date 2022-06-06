@@ -36,7 +36,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 	private static final long serialVersionUID = 1L;
 	MemoryMappedAssetFactory assetFactory;
 	ConcurrentNavigableMap<String, Record> index;
-	Map<String, Set<Listener>> observers;
+	transient Map<String, Set<Listener>> observers;
 	
 	
 	private class Record implements Serializable {
@@ -82,9 +82,17 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		observers = Collections.synchronizedMap(new WeakHashMap<String, Set<Listener>>());
 	}
 	
+	private Map<String, Set<Listener>> assertObserversExists() {
+		synchronized(this) {
+			if (observers == null) 
+				observers = Collections.synchronizedMap(new WeakHashMap<String, Set<Listener>>());
+		}
+		return observers;
+	}
+	
 	@Override
 	public void addListener(String docId, Listener listener) {
-		synchronized(observers) {
+		synchronized(assertObserversExists()) {
 			if (!observers.containsKey(docId))
 				observers.put(docId, new CopyOnWriteArraySet<Listener>());
 			observers.get(docId).add(listener);
@@ -93,7 +101,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 
 	@Override
 	public void removeListener(String docId, Listener listener) {
-		synchronized(observers) {
+		synchronized(assertObserversExists()) {
 			if (!observers.containsKey(docId))
 				observers.put(docId, new CopyOnWriteArraySet<Listener>());
 			observers.get(docId).remove(listener);
@@ -162,7 +170,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 			document.as(MemoryMappedDocument.class).withVERSION(storageRecord.versionNumber);
 		}
 		DocumentEvent evt = new DocumentEvent(this, docId);
-		observers
+		assertObserversExists()
 			.getOrDefault(docId, Collections.emptySet())
 			.parallelStream()
 			.forEach(o -> o.documentPut(evt));
@@ -183,7 +191,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 			storageRecord.addressable.free();
 		}
 		DocumentEvent evt = new DocumentEvent(this, docId);
-		observers
+		assertObserversExists()
 			.getOrDefault(docId, Collections.emptySet())
 			.parallelStream()
 			.forEach(o -> o.documentDeleted(evt));
