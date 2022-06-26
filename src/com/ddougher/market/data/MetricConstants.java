@@ -48,6 +48,8 @@ public class MetricConstants {
 	}
 
 	
+	public static final TimeZone NEW_YORK = TimeZone.getTimeZone("America/New_York");
+	
 	/**
 	 * 
 	 * @param year
@@ -56,7 +58,7 @@ public class MetricConstants {
 	 * @return
 	 */
 	public static final Date calendarDateFromTradingOffset(int year, int day, int minute) {
-		Calendar c = Calendar.getInstance();
+		Calendar c = Calendar.getInstance(NEW_YORK);
 		c.clear();
 		c.set(year, 0, 1, 4, 0, 0);
 		int offset = c.get(Calendar.DAY_OF_WEEK);
@@ -76,9 +78,9 @@ public class MetricConstants {
 
 
 	public static int tradingDayFromDate(Date startTime) {
-		Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+		Calendar c = Calendar.getInstance(NEW_YORK);
 		c.setTime(startTime);
-		int week_of_year = c.get(Calendar.WEEK_OF_YEAR);
+		int week_of_year = c.get(Calendar.WEEK_OF_YEAR)-1;
 		int day_of_week = c.get(Calendar.DAY_OF_WEEK);
 		if (day_of_week == Calendar.SUNDAY)
 			day_of_week = 0;
@@ -101,7 +103,7 @@ public class MetricConstants {
 
 
 	public static int tradingMinuteFromDate(Date startTime) {
-		Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+		Calendar c = Calendar.getInstance(NEW_YORK);
 		c.setTime(startTime);
 		int minutes = (c.get(Calendar.HOUR_OF_DAY) * 60) + c.get(Calendar.MINUTE);
 		return Math.min(960, Math.max(0, minutes-240));
@@ -109,13 +111,14 @@ public class MetricConstants {
 
 
 	public static int tradingYearFromDate(Date startTime) {
-		Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/New_York"));
+		Calendar c = Calendar.getInstance(NEW_YORK);
 		c.setTime(startTime);
 		return c.get(Calendar.YEAR);
 	}
 
 	public static Date previousTradingDate() {
-		Date d = new Date();
+		Calendar c = Calendar.getInstance(NEW_YORK);
+		Date d = c.getTime();
 		int year = tradingYearFromDate(d);
 		int day = tradingDayFromDate(d);
 		int minute = tradingMinuteFromDate(d);
@@ -125,7 +128,6 @@ public class MetricConstants {
 			year -= 1;
 			day = year_days[year-2000]-1;
 		}
-		
 		return calendarDateFromTradingOffset(year, day, minute);
 	}
 

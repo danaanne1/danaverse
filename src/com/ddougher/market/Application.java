@@ -21,6 +21,7 @@ import java.io.ObjectOutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.Optional;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.prefs.Preferences;
@@ -84,7 +86,7 @@ public class Application {
 
 		void backfillTickers() {
 			new Thread(()->{
-				reportingExceptionsAsAlerts(() -> {
+				reportingExceptions(() -> {
 					URL url = new URL("https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&sort=ticker&order=asc&limit=1000&apiKey=" + System.getenv("POLYGON_API_KEY"));
 					while (url != null) {
 						JsonNode root = readFromURL(url);
@@ -108,11 +110,21 @@ public class Application {
 		}
 		
 		void getPreviousDay() {
+			Object lock = new Object();
 			new Thread(()->
-				reportingExceptionsAsAlerts(() -> {
-					int count = 0;
-					for (String ticker : docStore.get(Stocks.class, "stocks").tickers().keySet().stream().sorted().toArray(i->new String[i])) {
-						System.out.println(count + ": Loading previous day results for " + ticker);
+				Arrays
+				.stream( 
+					docStore
+						.get(Stocks.class, "stocks")
+						.tickers()
+						.keySet()
+						.stream()
+						.sorted()
+						.toArray(i->new String[i])
+				)
+				.parallel()
+				.forEach(ticker -> 
+					reportingExceptions(() -> {
 						JsonNode root = readFromURL(new URL(
 								String.format(
 										"https://api.polygon.io/v2/aggs/ticker/%1$s/range/1/minute/%2$s/%2$s?adjusted=true&sort=asc&limit=1000&apiKey=%3$s",
@@ -121,17 +133,21 @@ public class Application {
 										System.getenv("POLYGON_API_KEY")
 								)
 						));
-						docStore.transact(ds->{
-							Stocks stocks = ds.get(Stocks.class, "stocks");
-							for (JsonNode result: root.get("results")) { 
-								saveAggsToSymbol(result, ds, stocks, ticker);
-							}
-							ds.put(stocks);
-						});
-						if (count++ > 5) break;
-						Thread.sleep(12000); // 5 api calls a minute
-					}
-				})
+						AtomicInteger rcount = new AtomicInteger(0);
+						synchronized(lock) {
+							docStore.transact(ds->{
+								Stocks stocks = ds.get(Stocks.class, "stocks");
+								if (root.has("results")) {
+									for (JsonNode result: root.get("results")) { 
+										saveAggsToSymbol(result, ds, stocks, ticker);
+										rcount.getAndIncrement();
+									}
+								}
+							});
+							System.out.println("Loaded " + rcount.get() + " results for " + ticker);
+						}
+					})
+				)
 			).start();
 		}
 		
@@ -145,14 +161,20 @@ public class Application {
 				throw new IllegalArgumentException("Trading minute too big");
 			
 			Equity e = stocks.tickers().get(ticker);
+
+			// metrics are indirect, so equity only needs to be saved if a new metric is added
 			Metric ohlc = e.metrics().get("ohlc");
 			if (ohlc == null)
 				e.metrics().put("ohlc", ohlc = ds.newInstance(Metric.class));
+				ds.put(e);
 
+			// years are indirect, so ohlc only needs to be saved if a new year is added	
 			Year year = ohlc.years().get(tradingYear);
 			if (year == null)
 				ohlc.years().put(tradingYear, year = ds.newInstance(Year.class));
+				ds.put(ohlc);
 			
+			// from here on out everything is a direct member of year, so year must be saved when done
 			Day day = year.days().get(tradingDay);
 			if (day == null) 
 				year.days().put(tradingDay, day = ds.newInstance(Day.class));
@@ -172,10 +194,7 @@ public class Application {
 				Double.valueOf(result.get("n").asDouble()).floatValue(),
 			});
 
-			ds.put(day);
 			ds.put(year);
-			ds.put(ohlc);
-			ds.put(e);
 		}
 		
 
@@ -382,20 +401,26 @@ public class Application {
 	interface ESupplier<T> {
 		T get() throws Exception;
 	}
-	<T> T reportingExceptionsAsAlerts(ESupplier<T> s) {
+	<T> T reportingExceptions(boolean displayAlert, ESupplier<T> s) {
 		try {
 			return s.get();
 		} catch (Exception e) {
 			e.printStackTrace(System.err);
-			JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE);
+			if (displayAlert) JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE);
 			return null;
 		}
+	}
+	<T> T reportingExceptions(ESupplier<T> s) {
+		return reportingExceptions(false, s);
 	}
 	interface ERunnable {
 		void run() throws Exception;
 	}
-	void reportingExceptionsAsAlerts(ERunnable r) {
-		reportingExceptionsAsAlerts(() -> { r.run(); return null; });
+	void reportingExceptions(boolean displayAlert, ERunnable r) {
+		reportingExceptions(displayAlert, () -> { r.run(); return null; });
+	}
+	void reportingExceptions(ERunnable r) {
+		reportingExceptions(false, r);
 	}
 
 	public static void main(String [] args) throws InvocationTargetException, InterruptedException {
