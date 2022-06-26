@@ -29,7 +29,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -72,6 +76,7 @@ public class Application {
 	ConcurrentMap<String,String> componentLinking = new ConcurrentHashMap<>();
 	
 	static class Constants {
+		static final String TERMINAL_STRING = "__terminal__";
 		static final String DOC_STORE_BASE_PATH_KEY = "basePath";
 		static final String DOC_STORE_DEFAULT_FOLDER_NAME = System.getProperty("user.home") + File.separator + String.join(File.separator, "Documents", "DanaTrade", "Data");
 	}
@@ -103,15 +108,16 @@ public class Application {
 							url = new URL(root.get("next_url").asText()+"&apiKey="+System.getenv("POLYGON_API_KEY"));
 						}
 						System.out.println("Backfill Sleeping on API");
-						Thread.sleep(12000); // 5 api calls a minute
 					}
 				});
 			}).start();
 		}
 		
 		void getPreviousDay() {
-			Object lock = new Object();
-			new Thread(()->
+			LinkedBlockingQueue<String> results = new LinkedBlockingQueue<String>();
+			AtomicInteger counter = new AtomicInteger();
+			Thread t;
+			(t=new Thread(()-> {
 				Arrays
 				.stream( 
 					docStore
@@ -124,7 +130,7 @@ public class Application {
 				)
 				.parallel()
 				.forEach(ticker -> 
-					reportingExceptions(() -> {
+					retryingExceptions(4, false, () -> {
 						JsonNode root = readFromURL(new URL(
 								String.format(
 										"https://api.polygon.io/v2/aggs/ticker/%1$s/range/1/minute/%2$s/%2$s?adjusted=true&sort=asc&limit=1000&apiKey=%3$s",
@@ -134,24 +140,36 @@ public class Application {
 								)
 						));
 						AtomicInteger rcount = new AtomicInteger(0);
-						synchronized(lock) {
-							docStore.transact(ds->{
-								Stocks stocks = ds.get(Stocks.class, "stocks");
-								if (root.has("results")) {
-									for (JsonNode result: root.get("results")) { 
-										saveAggsToSymbol(result, ds, stocks, ticker);
-										rcount.getAndIncrement();
-									}
+						docStore.transact(ds->{
+							if (root.has("results")) {
+								for (JsonNode result: root.get("results")) { 
+									saveAggsToSymbol(result, ds, ticker);
+									rcount.getAndIncrement();
 								}
-							});
-							System.out.println("Loaded " + rcount.get() + " results for " + ticker);
-						}
+							}
+						});
+						results.put(counter.incrementAndGet() + ": Loaded " + rcount.get() + " results for " + ticker);
 					})
-				)
-			).start();
+				);
+				results.add(Constants.TERMINAL_STRING);
+			})).start();
+			new Thread(() -> {
+				reportingExceptions(() -> {
+					String s;
+					while (t.isAlive()) {
+						while (null != (s = results.poll(1, TimeUnit.SECONDS))) {
+							if (s==Constants.TERMINAL_STRING) {
+								System.out.println("Finished");
+								return;
+							}
+							System.out.println(s);
+						}
+					}
+				});
+			}).start();
 		}
 		
-		private void saveAggsToSymbol(JsonNode result, DocumentStore ds, Stocks stocks, String ticker) {
+		private void saveAggsToSymbol(JsonNode result, DocumentStore ds, String ticker) {
 
 			Date date = new Date(result.get("t").asLong());
 			String tradingYear = Integer.toString(MetricConstants.tradingYearFromDate(date));
@@ -160,7 +178,7 @@ public class Application {
 			if (iTradingMinute > 960) 
 				throw new IllegalArgumentException("Trading minute too big");
 			
-			Equity e = stocks.tickers().get(ticker);
+			Equity e = ds.get(Equity.class, "Equity/"+ticker);
 
 			// metrics are indirect, so equity only needs to be saved if a new metric is added
 			Metric ohlc = e.metrics().get("ohlc");
@@ -205,7 +223,7 @@ public class Application {
 			Equity e = null;
 			e = tickers.get(ticker);
 			if (e==null) 
-				tickers.put(ticker, e = ds.newInstance(Equity.class));
+				tickers.put(ticker, e = ds.newInstance(Equity.class, "Equity/"+ticker));
 			e
 				.withSymbol(ticker)
 				.withName(result.get("name").asText())
@@ -401,26 +419,45 @@ public class Application {
 	interface ESupplier<T> {
 		T get() throws Exception;
 	}
+	interface ERunnable {
+		void run() throws Exception;
+	}
 	<T> T reportingExceptions(boolean displayAlert, ESupplier<T> s) {
-		try {
-			return s.get();
-		} catch (Exception e) {
-			e.printStackTrace(System.err);
-			if (displayAlert) JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE);
-			return null;
-		}
+		return retryingExceptions(1, displayAlert, s);
 	}
 	<T> T reportingExceptions(ESupplier<T> s) {
 		return reportingExceptions(false, s);
-	}
-	interface ERunnable {
-		void run() throws Exception;
 	}
 	void reportingExceptions(boolean displayAlert, ERunnable r) {
 		reportingExceptions(displayAlert, () -> { r.run(); return null; });
 	}
 	void reportingExceptions(ERunnable r) {
 		reportingExceptions(false, r);
+	}
+	<T> T retryingExceptions(int attempts, boolean displayAlert, ESupplier<T> s) {
+		while(attempts > 0) {
+			try {
+				return s.get();
+			} catch (Exception e) {
+				if (attempts > 1) {
+					System.out.println("retrying " + attempts + " more times for " + e);
+					continue;
+				}
+				e.printStackTrace(System.err);
+				if (displayAlert) JOptionPane.showMessageDialog(view.desktopPane, e.getMessage(), e.getClass().getName(), JOptionPane.ERROR_MESSAGE);
+			}
+			attempts--;
+		}
+		return null;
+	}
+	<T> T retryingExceptions(int attempts, ESupplier<T> s) {
+		return retryingExceptions(attempts, false, s);
+	}
+	void retryingExceptions(int attempts, boolean displayAlert, ERunnable r) {
+		retryingExceptions(attempts, displayAlert, () -> { r.run(); return null; });
+	}
+	void retryingExceptions(int attempts, ERunnable r) {
+		retryingExceptions(attempts, false, r);
 	}
 
 	public static void main(String [] args) throws InvocationTargetException, InterruptedException {
