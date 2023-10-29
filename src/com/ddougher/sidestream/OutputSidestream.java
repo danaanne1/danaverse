@@ -10,7 +10,6 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 
 
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 /** 
  * A Sidestream is a stream tunneling class that is serializable.

@@ -1,6 +1,6 @@
 package com.ddougher.proxamic;
 
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -94,7 +94,7 @@ class TestMemoryMappedDocumentStore {
 				bytes = bout.toByteArray();
 			}
 			
-			assertTrue("size check", (bytes.length - baslinesize) < 500);
+			assertTrue((bytes.length - baslinesize) < 500,"size check");
 			
 			try (ByteArrayInputStream bin = new ByteArrayInputStream(bytes);
 					ObjectInputStream ooin = new ObjectInputStream(bin)) 

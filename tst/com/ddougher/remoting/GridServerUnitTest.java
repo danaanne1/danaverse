@@ -7,7 +7,7 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.junit.Assert;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +41,7 @@ class GridServerUnitTest {
 	@Test
 	void toasterTest() throws IOException, InterruptedException, ExecutionException {
 		TestService service = client.createRemoteObject(TestService.class, TestServiceImpl.class, new Class[0], new Object[0]);
-		Assert.assertNotEquals(Thread.currentThread().getId(), service.getThreadId());
+		Assertions.assertNotEquals(Thread.currentThread().getId(), service.getThreadId());
 	}
 
 	@Test
@@ -51,7 +51,7 @@ class GridServerUnitTest {
 		for (Object o: result) {
 			if (o==(Object)105) return;
 		}
-		Assert.fail("Expected 105 to be present but got " + Arrays.toString(result));
+		Assertions.fail("Expected 105 to be present but got " + Arrays.toString(result));
 	}
 
 	@Test
@@ -78,10 +78,10 @@ class GridServerUnitTest {
 		player.setDocumentStore(store);
 		
 		record = player.characters().get(0);
-		Assert.assertEquals("The Engineer", record.name());
-		Assert.assertEquals(BigDecimal.ZERO, record.getAge());
-		Assert.assertEquals((Integer)100, record.getLevel());
-		Assert.assertEquals((Integer)21, record.abilityScoreMap().get("INT").value());
+		Assertions.assertEquals("The Engineer", record.name());
+		Assertions.assertEquals(BigDecimal.ZERO, record.getAge());
+		Assertions.assertEquals((Integer)100, record.getLevel());
+		Assertions.assertEquals((Integer)21, record.abilityScoreMap().get("INT").value());
 	}
 	
 	public static class TestServiceImpl implements TestService {
