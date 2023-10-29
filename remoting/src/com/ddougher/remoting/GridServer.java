@@ -9,6 +9,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Proxy;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
@@ -37,9 +38,15 @@ public class GridServer {
 		serverSocket.bind(address);
 	}
 
+	public static void main(String [] args) throws IOException {
+		InetSocketAddress serverAddress = new InetSocketAddress(0);
+		GridServer server = new GridServer(serverAddress);
+		server.start();
+	}
+
 	public void start() {
 		Thread t = new Thread(()->acceptNewIncoming());
-		t.setDaemon(true);
+		t.setDaemon(false);
 		t.start();
 	}
 	
