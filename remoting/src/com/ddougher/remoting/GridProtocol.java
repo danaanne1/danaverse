@@ -108,6 +108,16 @@ public class GridProtocol {
 			super();
 			this.className = className;
 		}
+
+		@Override
+		public String toString() {
+			return String.format
+			(
+					" FindClassRequest ( className=%s )",
+					className
+			);
+		}
+
 	}
 
 	static class FindClassResponse implements Serializable {
@@ -119,6 +129,16 @@ public class GridProtocol {
 			this.className = className;
 			this.bytes = bytes;
 		}
+
+		@Override
+		public String toString() {
+			return String.format
+			(
+				" FindClassResponse ( className=%s )",
+				className
+			);
+		}
+
 	}
 	
 }

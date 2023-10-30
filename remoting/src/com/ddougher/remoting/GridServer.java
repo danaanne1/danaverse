@@ -1,18 +1,8 @@
 package com.ddougher.remoting;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.lang.reflect.Proxy;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketAddress;
+import java.net.*;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,7 +29,7 @@ public class GridServer {
 	}
 
 	public static void main(String [] args) throws IOException {
-		InetSocketAddress serverAddress = new InetSocketAddress(0);
+		InetSocketAddress serverAddress = new InetSocketAddress(Integer.parseInt(args[0]));
 		GridServer server = new GridServer(serverAddress);
 		server.start();
 	}
@@ -86,21 +76,21 @@ public class GridServer {
 		public void run() throws IOException {
 			try (  	InputStream cin = socket.getInputStream();
 					BufferedInputStream bin = new BufferedInputStream(cin);
-					ObjectInputStream oin = new ObjectInputStream(bin); )
-			{
-				try (	OutputStream cout = socket.getOutputStream();
-						BufferedOutputStream bout = new BufferedOutputStream(cout);
-						ObjectOutputStream oout = new ObjectOutputStream(bout); )
-				{
+					ObjectInputStream oin = new ObjectInputStream(bin); ) {
+				try (OutputStream cout = socket.getOutputStream();
+					 BufferedOutputStream bout = new BufferedOutputStream(cout);
+					 ObjectOutputStream oout = new ObjectOutputStream(bout);) {
 					oout.flush(); // force out the stream headers
 					this.done = false;
 					this.oin = oin;
 					this.oout = oout;
 					this.instances = new ConcurrentHashMap<>();
-					this.classLoader = new GridProxiedClassLoader(getClass().getClassLoader(),oout);
-					while (!done && !shutdown) 
+					this.classLoader = new GridProxiedClassLoader(getClass().getClassLoader(), oout);
+					while (!done && !shutdown)
 						readAndDispatchIncoming();
-				} 
+				}
+			} catch (SocketException | EOFException broke) {
+				System.out.println(broke.getMessage());
 			} finally {
 				socket.close();
 			}
@@ -116,9 +106,9 @@ public class GridServer {
 						Object o = upConvert(ob);
 						if (debug) System.out.println(this.toString() + ":" + o);
 						this
-							.getClass()
-							.getDeclaredMethod("execute", o.getClass())
-							.invoke(this, o);
+								.getClass()
+								.getDeclaredMethod("execute", o.getClass())
+								.invoke(this, o);
 					}
 				));
 			} catch (ReflectiveOperationException  e) {
