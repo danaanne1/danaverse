@@ -1,4 +1,4 @@
-package com.ddougher.market;
+package com.ddougher.market.gui;
 
 import java.util.HashSet;
 

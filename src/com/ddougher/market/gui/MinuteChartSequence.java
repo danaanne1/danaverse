@@ -1,4 +1,4 @@
-package com.ddougher.market;
+package com.ddougher.market.gui;
 
 import java.io.Closeable;
 import java.util.Calendar;
@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
 
+import com.ddougher.market.Utils;
 import com.ddougher.market.data.Equity;
 import com.ddougher.market.data.Equity.Day;
 import com.ddougher.market.data.MetricConstants;

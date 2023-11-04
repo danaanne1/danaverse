@@ -20,8 +20,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 
-import com.ddougher.market.AbstractChartSequence;
-import com.ddougher.market.ChartSequence;
 import com.ddougher.market.data.MetricConstants.Candle;
 
 @SuppressWarnings({"serial","rawtypes", "unchecked"})
@@ -53,8 +51,8 @@ public class JChart extends JComponent {
 	LinkedHashMap<ChartSequence, SequenceInfo> sequences = new LinkedHashMap<>();
 
 	ChartSequence.Listener chartListener = new ChartSequence.Listener() {
-		public void sizeChanged(com.ddougher.market.ChartSequence.SizeChangedEvent evt) { repaint(); };
-		public void valuesChanged(com.ddougher.market.ChartSequence.ValueChangedEvent evt) { repaint(); };
+		public void sizeChanged(ChartSequence.SizeChangedEvent evt) { repaint(); };
+		public void valuesChanged(ChartSequence.ValueChangedEvent evt) { repaint(); };
 	};
 	
 	public interface SequencePainter<T> {
