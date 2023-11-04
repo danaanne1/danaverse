@@ -12,7 +12,6 @@ import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
 import com.ddougher.remoting.GridProtocol.FindClassResponse;
 import com.ddougher.remoting.GridProtocol.RemoteInvocationRequest;
 import com.ddougher.remoting.GridProtocol.RemoteInvocationResponse;
-import com.theunknowablebits.proxamic.TimeBasedUUIDGenerator;
 
 /**
  * @author Dana
