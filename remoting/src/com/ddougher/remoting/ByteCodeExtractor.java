@@ -33,7 +33,7 @@ public class ByteCodeExtractor implements ClassFileTransformer {
 		}
 	}
 
-	private static ReferenceQueue<CompletableFuture<byte[]>> queue;
+	private static ReferenceQueue<CompletableFuture<byte[]>> queue = new ReferenceQueue<>();
 	private static HashMap<Class, ByteCodeExtractorReference<CompletableFuture<byte[]>>> interest = new HashMap<>();
 	private static Instrumentation instrumentation;
 	private static boolean added = false;

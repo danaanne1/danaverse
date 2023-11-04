@@ -1,3 +1,4 @@
 Manifest-Version: 1.0
 Main-Class: com.ddougher.remoting.GridServer
-
+Premain-Class: com.ddougher.remoting.ByteCodeExtractor
+Can-Retransform-Classes: true
