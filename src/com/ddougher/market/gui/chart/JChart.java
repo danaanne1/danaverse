@@ -1,4 +1,4 @@
-package com.ddougher.market.gui;
+package com.ddougher.market.gui.chart;
 
 import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
