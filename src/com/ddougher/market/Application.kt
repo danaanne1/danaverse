@@ -4,19 +4,23 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import javax.swing.JDesktopPane
-import javax.swing.JFrame
-import javax.swing.JMenu
-import javax.swing.JMenuBar
-import javax.swing.SwingUtilities
+import java.util.prefs.Preferences
+import javax.swing.*
 
 class Application  {
 
+    val preferences = Preferences.userNodeForPackage(javaClass);
 
     inner class View {
+
         val desktopPane = JDesktopPane()
 
-        val toolsMenu = JMenu("Tools")
+
+        val toolsMenu: JMenu = JMenu("File").apply {
+            add(Utils.actionFu("Preferences") {
+                preferencesDialog.isVisible = true
+            })
+        }
 
         val mainMenuBar = JMenuBar().apply {
             add(toolsMenu)
@@ -48,8 +52,13 @@ class Application  {
             rootPane.jMenuBar = mainMenuBar
             pack()
         }
-    }
 
+        val preferencesDialog = JDialog(mainFrame, "Preferences", false).apply {
+            layout = BorderLayout()
+            add(PreferencesEditor(preferences), BorderLayout.CENTER)
+        }
+
+    }
     val view = View()
 
     fun start() {
