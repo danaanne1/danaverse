@@ -76,5 +76,6 @@ class Application  {
 }
 
 fun main() {
+    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
     Application().start()
 }
