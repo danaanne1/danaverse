@@ -114,7 +114,7 @@ class TestMemoryMappedDocumentStore {
 	@Nested
 	@DisplayName("basic operations") 
 	class BasicOperations {
-		
+
 		@Test
 		@DisplayName("creation")
 		void testNewInstance() {
@@ -122,9 +122,9 @@ class TestMemoryMappedDocumentStore {
 			assertEquals("danas character", docStore.getID(characterRecord));
 			// assertThrows(IllegalArgumentException.class, () -> docStore.getID(new BuffDocument()));
 		}
-		
+
 		@Test
-		@DisplayName("crud") 
+		@DisplayName("crud")
 		void testCrud() {
 			// create an instance via get (over missing)
 			CharacterRecord otherRecord = docStore.get(CharacterRecord.class, "danas character");
@@ -136,57 +136,57 @@ class TestMemoryMappedDocumentStore {
 			docStore.put(characterRecord.usingName("Dananator").characterClass("SoftwareEngineer").withLevel(25));
 
 			// obtain the inserted object
-			CharacterRecord retrieved = docStore.get(CharacterRecord.class,"danas character");
+			CharacterRecord retrieved = docStore.get(CharacterRecord.class, "danas character");
 
 			// the retrieved object should actually have gone over the byte bridge
-			assertEquals("Dananator", retrieved.name() );
+			assertEquals("Dananator", retrieved.name());
 
 			// get should always return a copy
 			assertNotSame(characterRecord, retrieved);
-			
+
 			// should not be able to insert a new record over an existing one
-			assertThrows( ConcurrentModificationException.class, () -> docStore.put(docStore.newInstance(CharacterRecord.class,"danas character")) );
-			
+			assertThrows(ConcurrentModificationException.class, () -> docStore.put(docStore.newInstance(CharacterRecord.class, "danas character")));
+
 			// out of order delete
-			assertThrows( ConcurrentModificationException.class, () -> docStore.delete(otherRecord) ); 
+			assertThrows(ConcurrentModificationException.class, () -> docStore.delete(otherRecord));
 
 			// in order delete
 			docStore.delete(characterRecord);
 
 			// character record is still assigned a version (even after delete) and should not be insertable as new:
-			assertThrows( ConcurrentModificationException.class, () -> docStore.put(characterRecord) );
-			
+			assertThrows(ConcurrentModificationException.class, () -> docStore.put(characterRecord));
+
 			// this record is still new, and should be insertable now
-			docStore.put(otherRecord);  
+			docStore.put(otherRecord);
 		}
-		
+
 		@Test
 		@DisplayName("indirects and serialized types")
 		void testIndirects() {
 			// create an instance via new instance
-			CharacterRecord characterRecord = 
+			CharacterRecord characterRecord =
 					docStore
-						.newInstance("CharacterRecord.Dana")
-						.as(CharacterRecord.class)
-						.usingName("Dananator")
-						.characterClass("Engineer")
-						.withLevel(50) // its vanilla people
-						.setAge(new BigDecimal(23));
-			
-			PlayerRecord playerRecord = 
+							.newInstance("CharacterRecord.Dana")
+							.as(CharacterRecord.class)
+							.usingName("Dananator")
+							.characterClass("Engineer")
+							.withLevel(50) // its vanilla people
+							.setAge(new BigDecimal(23));
+
+			PlayerRecord playerRecord =
 					docStore
-						.newInstance("Player.Dana")
-						.as(PlayerRecord.class)
-						.name("dana");
-			
-			
+							.newInstance("Player.Dana")
+							.as(PlayerRecord.class)
+							.name("dana");
+
+
 			// put the new instance, creating an actual record.
 			docStore.put(characterRecord.usingName("Dananator").characterClass("SoftwareEngineer").withLevel(25));
-			
+
 			playerRecord.characters().add(characterRecord);
-			
+
 			docStore.put(playerRecord);
-			
+
 			assertEquals("Dananator", playerRecord.characters().get(0).name());
 			assertEquals(new BigDecimal(23), playerRecord.characters().get(0).getAge());
 
@@ -200,38 +200,49 @@ class TestMemoryMappedDocumentStore {
 			docStore.put(characterRecord.usingName("Dananator").characterClass("SoftwareEngineer").withLevel(25));
 
 			// obtain a locked variant
-			CharacterRecord retrieved = docStore.lock(CharacterRecord.class,"danas character");
+			CharacterRecord retrieved = docStore.lock(CharacterRecord.class, "danas character");
 
 			// mutation other than through the lock item should fail
-			assertThrows(ConcurrentModificationException.class,()->docStore.put(characterRecord));
+			assertThrows(ConcurrentModificationException.class, () -> docStore.put(characterRecord));
 
 			// dont allow release except through the lock
-			assertThrows(ConcurrentModificationException.class,()->docStore.release(characterRecord));
+			assertThrows(ConcurrentModificationException.class, () -> docStore.release(characterRecord));
 
 			// cant lock over a lock
-			assertThrows(ConcurrentModificationException.class, ()->docStore.lock(CharacterRecord.class, "danas character"));
+			assertThrows(ConcurrentModificationException.class, () -> docStore.lock(CharacterRecord.class, "danas character"));
 
 			// proper release should work
 			docStore.release(retrieved);
-			retrieved = docStore.lock(CharacterRecord.class,"danas character");
-			
+			retrieved = docStore.lock(CharacterRecord.class, "danas character");
+
 			// put should release
 			docStore.put(retrieved);
 
-			CharacterRecord characterRecord2 = docStore.get(CharacterRecord.class , "danas character");
-			
+			CharacterRecord characterRecord2 = docStore.get(CharacterRecord.class, "danas character");
+
 			// releasing or operating on an unlocked should work after release
 			docStore.release(retrieved);
 			docStore.release(characterRecord2);
 			docStore.delete(characterRecord2);
-			assertThrows(ConcurrentModificationException.class, ()->docStore.put(characterRecord2));
-			
+			assertThrows(ConcurrentModificationException.class, () -> docStore.put(characterRecord2));
+
 			// can lock after release, and delete
-			retrieved = docStore.lock(CharacterRecord.class,"danas character");
-			
-			
+			retrieved = docStore.lock(CharacterRecord.class, "danas character");
+
+
 		}
-		
+
+		@Test
+		@DisplayName("polymorphic list data")
+		void polyListData() {
+			final TestPolyData tpd = docStore.newInstance( TestPolyData.class, "danas pd");
+			tpd.getPolyData().add(new Number [] { 1, 1.0f, 2.0d, 1L });
+			docStore.put(tpd);
+
+			TestPolyData tpd2 = docStore.get(TestPolyData.class, "danas pd");
+			assertArrayEquals(tpd2.getPolyData().get(0), new Number [] { 1, 1.0f, 2.0d, 1L } );
+		}
+
 	}
 
 	public static class DelegateDocumentStore implements DocumentStore, Serializable {

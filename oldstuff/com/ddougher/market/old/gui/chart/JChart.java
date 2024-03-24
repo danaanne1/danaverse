@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 
-import com.ddougher.market.data.MetricConstants.Candle;
+//import com.ddougher.market.data.MetricConstants.Candle;
 
 @SuppressWarnings({"serial","rawtypes", "unchecked"})
 public class JChart extends JComponent {

@@ -28,6 +28,9 @@ public class GridServer {
 	}
 
 	public static void main(String [] args) throws IOException {
+		System.out.println("Starting Grid Server on port " + Integer.parseInt(args[0]) );
+		System.out.println("Available Processors " + Runtime.getRuntime().availableProcessors());
+		System.out.println("Max Memory " + Runtime.getRuntime().maxMemory());
 		InetSocketAddress serverAddress = new InetSocketAddress(Integer.parseInt(args[0]));
 		GridServer server = new GridServer(serverAddress);
 		server.start();
