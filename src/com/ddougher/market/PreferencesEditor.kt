@@ -10,7 +10,6 @@ import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.JTree
 import javax.swing.event.*
-import javax.swing.table.DefaultTableModel
 import javax.swing.table.TableModel
 import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.TreeModel
@@ -53,11 +52,11 @@ class PreferencesEditor(val prefs: Preferences) : JPanel() {
             }
         }
         selectionModel.selectionMode = TreeSelectionModel.SINGLE_TREE_SELECTION
-        addTreeSelectionListener { TableModelEvent(prefsTableModel).apply { prefsTableModel.fireTableModelEvent { it.tableChanged(this) }} }
+        addTreeSelectionListener { TableModelEvent(prefsTableModel).apply { prefsTableModel.fireTableModelEvent { it.tableChanged(this) }; prefsTable.revalidate()} }
     }
 
     inner class PrefsTableModel: TableModel {
-        override fun getRowCount(): Int = (prefsTree.lastSelectedPathComponent as Preferences?)?.childrenNames()?.size ?: 0
+        override fun getRowCount(): Int = (prefsTree.lastSelectedPathComponent as Preferences?)?.keys()?.size ?: 0
         override fun getColumnCount(): Int = 2
         override fun getColumnName(columnIndex: Int): String = arrayOf("key","value")[columnIndex]
         override fun getColumnClass(columnIndex: Int): Class<*> = String::class.java
@@ -65,15 +64,15 @@ class PreferencesEditor(val prefs: Preferences) : JPanel() {
         override fun getValueAt(rowIndex: Int, columnIndex: Int): Any {
             val prefs: Preferences = prefsTree.lastSelectedPathComponent as Preferences? ?: return "null"
             return when (columnIndex) {
-                0 -> prefs.childrenNames()[rowIndex]
-                else -> prefs.get(prefs.childrenNames()[rowIndex],"")
+                0 -> prefs.keys()[rowIndex]
+                else -> prefs.get(prefs.keys()[rowIndex],"")
             }
         }
         override fun setValueAt(aValue: Any?, rowIndex: Int, columnIndex: Int) {
             val prefs: Preferences = prefsTree.lastSelectedPathComponent as Preferences? ?: return
             when (columnIndex) {
                 0 -> return
-                1 -> prefs.put(prefs.childrenNames()[rowIndex], aValue as String)
+                1 -> prefs.put(prefs.keys()[rowIndex], aValue as String)
             }
             TableModelEvent(this , rowIndex, rowIndex, columnIndex).apply { fireTableModelEvent { it.tableChanged(this) }}
         }
@@ -91,9 +90,9 @@ class PreferencesEditor(val prefs: Preferences) : JPanel() {
     val prefsTableModel = PrefsTableModel()
     val prefsTable: JTable = JTable(prefsTableModel)
 
-    val rightScrillPane = JScrollPane(prefsTable)
+    val rightScrullPane = JScrollPane(prefsTable)
     val leftScollPane = JScrollPane(prefsTree)
-    val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScollPane, rightScrillPane)
+    val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScollPane, rightScrullPane)
 
     init {
         layout = BorderLayout()
