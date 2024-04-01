@@ -1,29 +1,23 @@
 package com.ddougher.market
 
 import com.ddougher.proxamic.MemoryMappedDocumentStore
-import com.ddougher.proxamic.ObservableDocumentStore
-import com.theunknowablebits.proxamic.DocumentStore
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Dimension
-import java.awt.event.ActionEvent
-import java.awt.event.ComponentAdapter
-import java.awt.event.ContainerAdapter
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import java.awt.event.WindowStateListener
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.FileInputStream
-import java.io.IOException
-import java.io.ObjectInput
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.util.*
 import java.util.prefs.Preferences
 import javax.swing.*
 
+@OptIn(DelicateCoroutinesApi::class)
 class Application  {
 
     val preferences = Preferences.userNodeForPackage(javaClass).apply {
@@ -51,6 +45,11 @@ class Application  {
             add(Utils.actionFu("Preferences") {
                 preferencesDialog.isVisible = true
             })
+            add(Utils.actionFu("Backfill Tickers") {
+                GlobalScope.launch {
+
+                }
+            })
         }
 
         val mainMenuBar = JMenuBar().apply {
@@ -62,22 +61,7 @@ class Application  {
             defaultCloseOperation = JFrame.DO_NOTHING_ON_CLOSE
             preferredSize = Dimension(1500, 500)
             addWindowListener(object : WindowAdapter() {
-                override fun windowClosing(e: WindowEvent) {
-                    println("Frame Closing")
-                    this@Application.stop()
-                }
-
-                override fun windowClosed(e: WindowEvent) {
-                    println("Frame closed")
-                }
-
-                override fun windowActivated(e: WindowEvent) {
-                    println("Frame activated")
-                }
-
-                override fun windowDeactivated(e: WindowEvent) {
-                    println("Frame deactivated")
-                }
+                override fun windowClosing(e: WindowEvent) { this@Application.stop() }
             })
             rootPane.contentPane.add(BorderLayout.CENTER, desktopPane)
             rootPane.jMenuBar = mainMenuBar
