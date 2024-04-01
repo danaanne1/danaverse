@@ -4,12 +4,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
-import java.util.Collections;
-import java.util.ConcurrentModificationException;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.WeakHashMap;
+import java.util.*;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -134,6 +129,10 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		Document doc = docFromNothing.get();
 		doc.as(MemoryMappedDocument.class).withID(key).withVERSION(0L);
 		return withDocStore(doc);
+	}
+
+	public NavigableSet<String> keys() {
+		return Collections.unmodifiableNavigableSet(index.keySet());
 	}
 
 	@Override

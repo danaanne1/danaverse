@@ -1,5 +1,6 @@
 package com.ddougher.market
 
+import com.ddougher.market.polygon.BackfilTickers
 import com.ddougher.proxamic.MemoryMappedDocumentStore
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -22,6 +23,7 @@ class Application  {
 
     val preferences = Preferences.userNodeForPackage(javaClass).apply {
         node("DocStore").apply { put(com.ddougher.market.Constants.DOC_STORE_BASE_PATH_KEY, get(com.ddougher.market.Constants.DOC_STORE_BASE_PATH_KEY, com.ddougher.market.Constants.DOC_STORE_DEFAULT_FOLDER_NAME)) }
+        node( "Polygon").apply { put("apiKey", get("apiKey", "unknown")) }
     }
 
 
@@ -45,9 +47,9 @@ class Application  {
             add(Utils.actionFu("Preferences") {
                 preferencesDialog.isVisible = true
             })
-            add(Utils.actionFu("Backfill Tickers") {
+            add(Utils.actionFu("Backfill Common Stock Tickers") {
                 GlobalScope.launch {
-
+                    BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
                 }
             })
         }
