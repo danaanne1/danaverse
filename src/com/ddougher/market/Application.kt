@@ -1,5 +1,7 @@
 package com.ddougher.market
 
+import com.ddougher.market.application.StockDataBrowser
+import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.polygon.BackfilTickers
 import com.ddougher.proxamic.MemoryMappedDocumentStore
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -50,6 +52,14 @@ class Application  {
             add(Utils.actionFu("Backfill Common Stock Tickers") {
                 GlobalScope.launch {
                     BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
+                }
+            })
+            add(Utils.actionFu("Browse Data") {
+                JDialog(mainFrame,"Data Browser", false).apply {
+                    contentPane.add(BorderLayout.CENTER, StockDataBrowser(docStore.get(Stocks::class.java, "stocks")))
+                    preferredSize = Dimension(800,800)
+                    pack()
+                    isVisible = true
                 }
             })
         }
