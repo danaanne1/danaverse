@@ -130,8 +130,8 @@ class CSVImporter(val app: Application) {
             }
             processAllRecordsIn(directoryPath).collect { recordChannel.send(it) }
             recordChannel.close()
-            println("Done importing")
         }
+        println("Done importing")
     }
     
     
