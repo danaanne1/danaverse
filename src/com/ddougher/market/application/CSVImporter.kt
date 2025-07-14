@@ -4,14 +4,22 @@ import com.ddougher.market.Application
 import com.ddougher.market.data.core.Equity
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.data.extensions.mergeAggregateData
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.GZIPInputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.Calendar
+import java.util.concurrent.Executors
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 
@@ -21,6 +29,7 @@ import javax.swing.JFileChooser
  * @property app The application instance that provides access to the document store and preferences.
  */
 class CSVImporter(val app: Application) {
+    val tp = Executors.newCachedThreadPool().asCoroutineDispatcher()
 
     /**
      * Opens a directory chooser dialog and returns the selected directory path.
@@ -58,31 +67,70 @@ class CSVImporter(val app: Application) {
      * @param directoryPath The path to the directory containing CSV files to import
      */
     suspend fun doImportFrom(directoryPath: String) {
-        processAllRecordsIn(directoryPath).collect { values ->
-            app.docStore.transact { ds ->
-                val stocks: Stocks = ds.get(Stocks::class.java, "stocks")
-                var equity: Equity? = null
-                for (valueSet in values) {
-                    if (equity == null || equity.symbol != valueSet["ticker"]) {
-                        if (equity != null) { ds.put(equity) }
-                        equity = stocks.tickers().getOrPut(valueSet["ticker"]!!) { ds.newInstance(Equity::class.java).also { ds.put(stocks) }}
-                        println("${valueSet["ticker"]} ${Calendar.getInstance().apply { timeInMillis = valueSet["window_start"]!!.toLong()/1000000 }.time}")
-                    }
-                    equity!!.mergeAggregateData(
-                        mapOf(
-                            "o" to valueSet["open"]!!.toDouble(),
-                            "h" to valueSet["high"]!!.toDouble(),
-                            "l" to valueSet["low"]!!.toDouble(),
-                            "c" to valueSet["close"]!!.toDouble(),
-                            "v" to valueSet["volume"]!!.toLong(),
-                            "vw" to 0.0,
-                            "z" to valueSet["transactions"]!!.toLong(),
-                            "s" to valueSet["window_start"]!!.toLong()/1000000
-                        )
-                    )
+        val recordChannel = Channel<List<Map<String, String>>>(100)
+
+        coroutineScope {
+            val stocksLock = Mutex()
+            repeat(10) {
+                launch(tp) {
+                    do {
+                        val values = recordChannel.receiveCatching().getOrNull()
+                        while (values != null) {
+                            try {
+                                app.docStore.transact { ds ->
+                                    val equity =
+                                        ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}").also {
+                                            it.symbol = values.first()["ticker"]!!
+                                        }
+
+                                    for (valueSet in values) {
+                                        equity!!.mergeAggregateData(
+                                            mapOf(
+                                                "o" to valueSet["open"]!!.toDouble(),
+                                                "h" to valueSet["high"]!!.toDouble(),
+                                                "l" to valueSet["low"]!!.toDouble(),
+                                                "c" to valueSet["close"]!!.toDouble(),
+                                                "v" to valueSet["volume"]!!.toLong(),
+                                                "vw" to 0.0,
+                                                "z" to valueSet["transactions"]!!.toLong(),
+                                                "s" to valueSet["window_start"]!!.toLong() / 1000000
+                                            )
+                                        )
+                                    }
+
+                                    println(
+                                        "${equity.symbol} ${
+                                            Calendar.getInstance().apply {
+                                                timeInMillis = values.first()["window_start"]!!.toLong() / 1000000
+                                            }.time
+                                        }"
+                                    )
+
+                                    ds.put(equity)
+                                }
+                            } catch (ex: ConcurrentModificationException) {
+                                println("ConcurrentModificationException: ${ex.message}")
+                                delay(50)
+                                continue
+                            }
+                            stocksLock.withLock {
+                                app.docStore.transact { ds ->
+                                    val stocks = ds.get(Stocks::class.java, "stocks")
+                                    stocks.tickers().getOrPut(values.first()["ticker"]!!) {
+                                        ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}").also {
+                                            ds.put(stocks)
+                                        }
+                                    }
+                                }
+                            }
+                            break
+                        }
+                    } while (values != null)
                 }
-                ds.put(equity)
             }
+            processAllRecordsIn(directoryPath).collect { recordChannel.send(it) }
+            recordChannel.close()
+            println("Done importing")
         }
     }
     
