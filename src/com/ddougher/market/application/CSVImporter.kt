@@ -29,14 +29,12 @@ class CSVImporter(val app: Application) {
 
     private fun getDirectoryPath(): String? {
         var selectedPath: String? = null
-        SwingUtilities.invokeAndWait {
-            val fileChooser = JFileChooser().apply {
-                fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                dialogTitle = "Select Directory"
-            }
-            if (fileChooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-                selectedPath = fileChooser.selectedFile.absolutePath
-            }
+        val fileChooser = JFileChooser().apply {
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+            dialogTitle = "Select Directory"
+        }
+        if (fileChooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+            selectedPath = fileChooser.selectedFile.absolutePath
         }
         return selectedPath
     }
@@ -68,7 +66,7 @@ class CSVImporter(val app: Application) {
                         if (equity != null) { ds.put(equity) }
                         equity = stocks.tickers().getOrPut(valueSet["ticker"]!!) { ds.newInstance(Equity::class.java).also { ds.put(stocks) }}
                     }
-                    equity.mergeAggregateData(
+                    equity!!.mergeAggregateData(
                         mapOf(
                             "o" to valueSet["open"]!!.toDouble(),
                             "h" to valueSet["high"]!!.toDouble(),
