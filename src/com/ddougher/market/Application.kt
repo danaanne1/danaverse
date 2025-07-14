@@ -1,5 +1,6 @@
 package com.ddougher.market
 
+import com.ddougher.market.application.CSVImporter
 import com.ddougher.market.application.StockDataBrowser
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.polygon.BackfilTickers
@@ -52,6 +53,11 @@ class Application  {
             add(Utils.actionFu("Backfill Common Stock Tickers") {
                 GlobalScope.launch {
                     BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
+                }
+            })
+            add(Utils.actionFu("Backfill from csv") {
+                GlobalScope.launch {
+                    CSVImporter(this@Application).doImport()
                 }
             })
             add(Utils.actionFu("Browse Data") {

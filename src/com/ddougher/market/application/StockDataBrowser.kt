@@ -14,7 +14,6 @@ import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.ListModel
 
-// TODO: Maybe just make this a toolbar with some combo boxes
 /**
  * List of equitites, equity details, table browser for equity technicals by from, to date (or all)
  */

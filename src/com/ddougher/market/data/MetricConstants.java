@@ -1,7 +1,5 @@
 package com.ddougher.market.data;
 
-import java.util.Calendar;
-import java.util.Date;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,13 +9,14 @@ public class MetricConstants {
 
 	/** Definitions for the built in candle value array */
 	public enum Candle {
-		OPEN(0, "The starting price"),
-		HIGH(1, "The higest price reached"),
-		LOW(2, "The lowest price reached"),
-		CLOSE(3, "The ending price"),
-		VOLUME(4, "Number of shares traded"),
-		VWAP(5, "The volume weighted average price"),
-		TRADES(6, "The number of trades");
+		TIME(0, "Window start time"),
+		OPEN(1, "The starting price"),
+		HIGH(2, "The higest price reached"),
+		LOW(3, "The lowest price reached"),
+		CLOSE(4, "The ending price"),
+		VOLUME(5, "Number of shares traded"),
+		VWAP(6, "The volume weighted average price"),
+		TRADESIZE(7, "The number of trades");
 		
 		public final int value;
 		public final String description;
@@ -35,7 +34,7 @@ public class MetricConstants {
 	public static final Map<String, String []> technicalFieldList = new ConcurrentHashMap<String, String[]>();
 	
 	static {
-		technicalFieldList.put("ohlc", new String []  { "open", "high", "low", "close", "volume", "vwap", "trades" } ); // OHLC
+		technicalFieldList.put("ohlc", new String []  { "time", "open", "high", "low", "close", "volume", "vwap", "tradesize" } ); // OHLC
 	}
 
 	
