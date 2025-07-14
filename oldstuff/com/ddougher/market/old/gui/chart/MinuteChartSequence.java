@@ -13,8 +13,8 @@ import com.ddougher.market.data.Equity.Day;
 import com.ddougher.market.data.MetricConstants;
 import com.ddougher.proxamic.MemoryMappedDocumentStore;
 import com.ddougher.proxamic.ObservableDocumentStore;
-import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.DocumentStoreAware;
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.DocumentStoreAware;
 
 // premarket hours are 4am to 930am (330 minutes)
 // regularmarket hours are 930am to 4pm (390 minutes)

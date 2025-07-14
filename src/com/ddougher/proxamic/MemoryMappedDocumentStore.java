@@ -14,12 +14,12 @@ import java.util.function.Supplier;
 import com.ddougher.proxamic.ObservableDocumentStore.Listener.DocumentEvent;
 import com.ddougher.util.AssetFactory.Addressable;
 import com.ddougher.util.MemoryMappedAssetFactory;
-import com.theunknowablebits.proxamic.AbstractDocumentStore;
-import com.theunknowablebits.proxamic.Document;
-import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.DocumentView;
-import com.theunknowablebits.proxamic.Getter;
-import com.theunknowablebits.proxamic.Setter;
+import com.ddougher.proxamic.AbstractDocumentStore;
+import com.ddougher.proxamic.Document;
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.DocumentView;
+import com.ddougher.proxamic.Getter;
+import com.ddougher.proxamic.Setter;
 
 /**
  * A memory mapped document store

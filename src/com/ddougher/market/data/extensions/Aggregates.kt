@@ -4,7 +4,7 @@ import com.ddougher.market.data.core.Equity
 import com.ddougher.market.data.core.Equity.Day
 import com.ddougher.market.data.core.Equity.Metric
 import com.ddougher.market.data.core.Equity.Year
-import com.theunknowablebits.proxamic.DocumentView
+import com.ddougher.proxamic.DocumentView
 import java.util.Calendar
 
 /**

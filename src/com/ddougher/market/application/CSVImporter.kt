@@ -11,6 +11,7 @@ import java.io.FileInputStream
 import java.util.zip.GZIPInputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.Calendar
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
 
@@ -65,6 +66,7 @@ class CSVImporter(val app: Application) {
                     if (equity == null || equity.symbol != valueSet["ticker"]) {
                         if (equity != null) { ds.put(equity) }
                         equity = stocks.tickers().getOrPut(valueSet["ticker"]!!) { ds.newInstance(Equity::class.java).also { ds.put(stocks) }}
+                        println("${valueSet["ticker"]} ${Calendar.getInstance().apply { timeInMillis = valueSet["window_start"]!!.toLong()/1000000 }.time}")
                     }
                     equity!!.mergeAggregateData(
                         mapOf(
@@ -75,7 +77,7 @@ class CSVImporter(val app: Application) {
                             "v" to valueSet["volume"]!!.toLong(),
                             "vw" to 0.0,
                             "z" to valueSet["transactions"]!!.toLong(),
-                            "s" to valueSet["window_start"]!!.toLong()
+                            "s" to valueSet["window_start"]!!.toLong()/1000000
                         )
                     )
                 }

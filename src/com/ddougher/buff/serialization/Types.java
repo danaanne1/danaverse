@@ -1,7 +1,7 @@
 package com.ddougher.buff.serialization;
 
-import com.theunknowablebits.buff.serialization.Array;
-import com.theunknowablebits.buff.serialization.Struct;
+import com.ddougher.buff.serialization.Array;
+import com.ddougher.buff.serialization.Struct;
 
 import java.io.*;
 import java.nio.ByteBuffer;

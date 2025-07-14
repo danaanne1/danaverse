@@ -8,9 +8,9 @@ import javax.swing.AbstractAction;
 import javax.swing.Action;
 
 import com.ddougher.proxamic.ObservableDocumentStore;
-import com.theunknowablebits.proxamic.Document;
-import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.DocumentStoreAware;
+import com.ddougher.proxamic.Document;
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.DocumentStoreAware;
 
 public final class Utils {
 

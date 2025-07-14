@@ -2,10 +2,10 @@ package com.ddougher.market.data.core;
 
 import java.util.Map;
 
-import com.theunknowablebits.proxamic.DocumentStoreAware;
-import com.theunknowablebits.proxamic.DocumentView;
-import com.theunknowablebits.proxamic.Getter;
-import com.theunknowablebits.proxamic.Indirect;
+import com.ddougher.proxamic.DocumentStoreAware;
+import com.ddougher.proxamic.DocumentView;
+import com.ddougher.proxamic.Getter;
+import com.ddougher.proxamic.Indirect;
 
 public interface Stocks extends DocumentView, DocumentStoreAware {
 

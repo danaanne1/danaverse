@@ -27,12 +27,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.theunknowablebits.proxamic.Document;
-import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.DocumentStoreAware;
-import com.theunknowablebits.proxamic.LocalDocumentStore;
-import com.theunknowablebits.proxamic.exampledata.CharacterRecord;
-import com.theunknowablebits.proxamic.exampledata.PlayerRecord;
+import com.ddougher.proxamic.Document;
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.DocumentStoreAware;
+import com.ddougher.proxamic.LocalDocumentStore;
+import com.ddougher.proxamic.exampledata.CharacterRecord;
+import com.ddougher.proxamic.exampledata.PlayerRecord;
 
 class TestMemoryMappedDocumentStore {
 

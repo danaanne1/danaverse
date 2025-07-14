@@ -12,11 +12,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.theunknowablebits.proxamic.DocumentStore;
-import com.theunknowablebits.proxamic.MemoryDocumentStore;
-import com.theunknowablebits.proxamic.exampledata.AbilityScore;
-import com.theunknowablebits.proxamic.exampledata.CharacterRecord;
-import com.theunknowablebits.proxamic.exampledata.PlayerRecord;
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.MemoryDocumentStore;
+import com.ddougher.proxamic.exampledata.AbilityScore;
+import com.ddougher.proxamic.exampledata.CharacterRecord;
+import com.ddougher.proxamic.exampledata.PlayerRecord;
 
 class GridServerUnitTest {
 

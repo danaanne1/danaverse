@@ -6,7 +6,7 @@ import com.ddougher.market.data.core.Stocks
 import com.ddougher.proxamic.MemoryMappedDocumentStore
 import com.ddougher.proxamic.ObservableDocumentStore
 import com.fasterxml.jackson.databind.JsonNode
-import com.theunknowablebits.proxamic.DocumentStore
+import com.ddougher.proxamic.DocumentStore
 import java.io.BufferedInputStream
 import java.io.Closeable
 import java.net.URL

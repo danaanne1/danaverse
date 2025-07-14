@@ -3,8 +3,8 @@ package com.ddougher.proxamic;
 import java.util.EventListener;
 import java.util.EventObject;
 
-import com.theunknowablebits.proxamic.Document;
-import com.theunknowablebits.proxamic.DocumentStore;
+import com.ddougher.proxamic.Document;
+import com.ddougher.proxamic.DocumentStore;
 
 public interface ObservableDocumentStore extends DocumentStore {
 

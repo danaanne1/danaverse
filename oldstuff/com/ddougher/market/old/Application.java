@@ -60,7 +60,7 @@ import com.ddougher.market.gui.chart.JChart;
 import com.ddougher.proxamic.MemoryMappedDocumentStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.theunknowablebits.proxamic.DocumentStore;
+import com.ddougher.proxamic.DocumentStore;
 
 public class Application {
 	

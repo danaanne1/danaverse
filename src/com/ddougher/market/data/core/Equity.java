@@ -3,7 +3,7 @@ package com.ddougher.market.data.core;
 import java.util.List;
 import java.util.Map;
 
-import com.theunknowablebits.proxamic.*;
+import com.ddougher.proxamic.*;
 
 public interface Equity extends DocumentView, DocumentStoreAware {
 
