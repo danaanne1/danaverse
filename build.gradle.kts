@@ -1,4 +1,5 @@
 plugins {
+    java
     kotlin("jvm") version "1.9.21"
     application
 }
@@ -12,6 +13,9 @@ repositories {
 
 sourceSets {
     main {
+        java {
+            srcDir("src")
+        }
         kotlin {
             srcDir("src")
         }
@@ -20,6 +24,9 @@ sourceSets {
         }
     }
     test {
+        java {
+            srcDir("tst")
+        }
         kotlin {
             srcDir("tst")
         }
@@ -46,14 +53,24 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
 }
 
+// Set Java compatibility to 1.8 to match Kotlin target
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
     kotlinOptions.jvmTarget = "1.8"
 }
+
+//tasks.withType<JavaCompile> {
+//    options.release.set(8)
+//}
 
 tasks.withType<Test> {
     useJUnitPlatform()
 }
 
 application {
-    mainClass.set("com.ddougher.danaverse.MainKt") // Update this with your actual main class
+    mainClass.set("com.ddougher.danaverse.ApplicationKt") // Update this with your actual main class
 }
