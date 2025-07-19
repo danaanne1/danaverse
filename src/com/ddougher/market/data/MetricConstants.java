@@ -34,7 +34,7 @@ public class MetricConstants {
 	public static final Map<String, String []> technicalFieldList = new ConcurrentHashMap<String, String[]>();
 	
 	static {
-		technicalFieldList.put("ohlc", new String []  { "time", "open", "high", "low", "close", "volume", "vwap", "tradesize" } ); // OHLC
+		technicalFieldList.put("ohlc_min", new String []  { "time", "open", "high", "low", "close", "volume", "vwap", "tradesize" } ); // OHLC
 	}
 
 	
