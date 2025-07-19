@@ -1,12 +1,11 @@
 package com.ddougher.proxamic;
 
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 final class TransactingDocumentStore implements DocumentStore, Consumer<Consumer<DocumentStore>> {
-	LinkedHashSet<Document> membership = new LinkedHashSet<>();
+	Set<Document> membership = Collections.synchronizedSet(new LinkedHashSet<>());
 	DocumentStore delegate;
 
 	HashMap<String, Document> documentsById = new HashMap<>();
@@ -23,6 +22,7 @@ final class TransactingDocumentStore implements DocumentStore, Consumer<Consumer
 	}
 	
 	private Document checkMembership(Document document) {
+
 		if (!membership.contains(document))
 			throw new IllegalArgumentException("document is not a member of this transaction or a containing transaction");
 		return document;
@@ -88,14 +88,14 @@ final class TransactingDocumentStore implements DocumentStore, Consumer<Consumer
 		documentsById.keySet().removeAll(toDelete.keySet());
 		documentsById.keySet().removeAll(toPut.keySet());
 
-		toDelete.forEach((key,document)->delegate.delete(document));
+		toDelete.values().parallelStream().forEach(document->delegate.delete(document));
 
-		toPut.forEach((key,document)->delegate.put(document));
+		toPut.values().parallelStream().forEach(document->delegate.put(document));
 
-		documentsById.forEach((key,document)->delegate.release(document));
+		documentsById.values().parallelStream().forEach(document->delegate.release(document));
 	}
 	final void rollback() {
-		documentsById.forEach((key,document)->delegate.release(document));
+		documentsById.values().parallelStream().forEach(document->delegate.release(document));
 	}
 
 	@Override
