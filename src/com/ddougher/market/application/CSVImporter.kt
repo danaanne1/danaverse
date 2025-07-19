@@ -69,10 +69,34 @@ class CSVImporter(val app: Application) {
 
 
     /**
-     * Imports CSV data from the specified directory path into the application's document store.
-     * Processes each file in the directory, extracts stock data, and saves it to the document store.
-     *
+     * Imports CSV data from the specified directory path into the application's document store using concurrent processing.
+     * 
+     * This method performs the following operations:
+     * - Creates a bounded channel for processing batched CSV records
+     * - Launches 100 concurrent coroutines to process equity data in parallel
+     * - Uses per-ticker mutexes to ensure thread-safe updates to individual equities
+     * - Processes each batch of records grouped by ticker symbol
+     * - Merges aggregate OHLCV (Open, High, Low, Close, Volume) data into equity documents
+     * - Updates the stocks registry with processed tickers
+     * - Executes all operations within a document store transaction
+     * 
+     * The method expects CSV files to contain the following columns:
+     * - ticker: Stock symbol identifier
+     * - open, high, low, close: Price data as doubles
+     * - volume: Trading volume as long
+     * - transactions: Number of transactions as long  
+     * - window_start: Timestamp in nanoseconds, converted to milliseconds for storage
+     * 
+     * Processing is done concurrently with proper synchronization:
+     * - Individual ticker processing is serialized using per-ticker mutexes
+     * - Global stocks registry updates are synchronized using a shared mutex
+     * - Records are processed in batches grouped by ticker to optimize database operations
+     * 
      * @param directoryPath The path to the directory containing CSV files to import
+     * @throws Exception if CSV processing fails, database transaction fails, or concurrent access issues occur
+     * 
+     * @see processAllRecordsIn for CSV file processing details
+     * @see Equity.mergeAggregateData for data merging logic
      */
     fun doImportFrom(directoryPath: String) {
         val recordChannel = Channel<List<Map<String, String>>>(100)
