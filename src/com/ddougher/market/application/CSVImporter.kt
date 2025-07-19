@@ -5,12 +5,18 @@ import com.ddougher.market.data.core.Equity
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.data.extensions.mergeAggregateData
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -19,6 +25,8 @@ import java.util.zip.GZIPInputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.Calendar
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentMap
 import java.util.concurrent.Executors
 import javax.swing.SwingUtilities
 import javax.swing.JFileChooser
@@ -53,7 +61,7 @@ class CSVImporter(val app: Application) {
      * Initiates the CSV import process by prompting the user to select a directory
      * and then importing data from the selected directory.
      */
-    suspend fun doImport() {
+    fun doImport() {
         getDirectoryPath()?.let { path ->
             doImportFrom(path)
         }
@@ -66,70 +74,70 @@ class CSVImporter(val app: Application) {
      *
      * @param directoryPath The path to the directory containing CSV files to import
      */
-    suspend fun doImportFrom(directoryPath: String) {
+    fun doImportFrom(directoryPath: String) {
         val recordChannel = Channel<List<Map<String, String>>>(100)
 
-        coroutineScope {
-            val stocksLock = Mutex()
-            repeat(10) {
-                launch(tp) {
-                    do {
-                        val values = recordChannel.receiveCatching().getOrNull()
-                        while (values != null) {
-                            try {
-                                app.docStore.transact { ds ->
-                                    val equity =
-                                        ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}").also {
-                                            it.symbol = values.first()["ticker"]!!
-                                        }
+        app.docStore.transact { ds ->
+            runBlocking {
+                coroutineScope {
+                    val stocksLock = Mutex()
+                    val equityLock = ConcurrentHashMap<String, Mutex>()
+                    repeat(100) {
+                        launch(tp) {
+                            do {
+                                val values = recordChannel.receiveCatching().getOrNull()
+                                while (values != null) {
+                                    equityLock.getOrPut(values.first()["ticker"]!!) { Mutex() }.withLock {
+                                        val equity =
+                                            ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}")
+                                                .also {
+                                                    it.symbol = values.first()["ticker"]!!
+                                                }
 
-                                    for (valueSet in values) {
-                                        equity!!.mergeAggregateData(
-                                            mapOf(
-                                                "o" to valueSet["open"]!!.toDouble(),
-                                                "h" to valueSet["high"]!!.toDouble(),
-                                                "l" to valueSet["low"]!!.toDouble(),
-                                                "c" to valueSet["close"]!!.toDouble(),
-                                                "v" to valueSet["volume"]!!.toLong(),
-                                                "vw" to 0.0,
-                                                "z" to valueSet["transactions"]!!.toLong(),
-                                                "s" to valueSet["window_start"]!!.toLong() / 1000000
+                                        for (valueSet in values) {
+                                            equity!!.mergeAggregateData(
+                                                mapOf(
+                                                    "o" to valueSet["open"]!!.toDouble(),
+                                                    "h" to valueSet["high"]!!.toDouble(),
+                                                    "l" to valueSet["low"]!!.toDouble(),
+                                                    "c" to valueSet["close"]!!.toDouble(),
+                                                    "v" to valueSet["volume"]!!.toLong(),
+                                                    "vw" to 0.0,
+                                                    "z" to valueSet["transactions"]!!.toLong(),
+                                                    "s" to valueSet["window_start"]!!.toLong() / 1000000
+                                                )
                                             )
+                                        }
+
+                                        println(
+                                            "${equity.symbol} ${
+                                                Calendar.getInstance().apply {
+                                                    timeInMillis =
+                                                        values.first()["window_start"]!!.toLong() / 1000000
+                                                }.time
+                                            }"
                                         )
+
+                                        ds.put(equity)
                                     }
-
-                                    println(
-                                        "${equity.symbol} ${
-                                            Calendar.getInstance().apply {
-                                                timeInMillis = values.first()["window_start"]!!.toLong() / 1000000
-                                            }.time
-                                        }"
-                                    )
-
-                                    ds.put(equity)
-                                }
-                            } catch (ex: ConcurrentModificationException) {
-                                println("ConcurrentModificationException: ${ex.message}")
-                                delay(50)
-                                continue
-                            }
-                            stocksLock.withLock {
-                                app.docStore.transact { ds ->
-                                    val stocks = ds.get(Stocks::class.java, "stocks")
-                                    stocks.tickers().getOrPut(values.first()["ticker"]!!) {
-                                        ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}").also {
-                                            ds.put(stocks)
+                                    stocksLock.withLock {
+                                        val stocks = ds.get(Stocks::class.java, "stocks")
+                                        stocks.tickers().getOrPut(values.first()["ticker"]!!) {
+                                            ds.get(Equity::class.java, "equities/${values.first()["ticker"]!!}")
+                                                .also {
+                                                    ds.put(stocks)
+                                                }
                                         }
                                     }
+                                    break
                                 }
-                            }
-                            break
+                            } while (values != null)
                         }
-                    } while (values != null)
+                    }
+                    processAllRecordsIn(directoryPath).collect { recordChannel.send(it) }
+                    recordChannel.close()
                 }
             }
-            processAllRecordsIn(directoryPath).collect { recordChannel.send(it) }
-            recordChannel.close()
         }
         println("Done importing")
     }
@@ -143,23 +151,26 @@ class CSVImporter(val app: Application) {
      * @param directoryPath The path to the directory containing CSV files
      * @return A Flow emitting lists of data records, where each list contains records for a single ticker
      */
-    suspend fun processAllRecordsIn(directoryPath: String): Flow<List<Map<String, String>>> = flow {
-        listfiles(directoryPath).collect { filePath ->
-            var currentTicker: String? = null
-            val currentList = mutableListOf<Map<String, String>>()
-
-            processFile(filePath).collect { values ->
-                val ticker = values["ticker"]
-                if (currentTicker != ticker && currentTicker != null) {
-                    emit(currentList.toList())
-                    currentList.clear()
+    suspend fun processAllRecordsIn(directoryPath: String): Flow<List<Map<String, String>>> = channelFlow {
+        coroutineScope {
+            listfiles(directoryPath).map { filePath ->
+                async {
+                    var currentTicker: String? = null
+                    val currentList = mutableListOf<Map<String, String>>()
+                    processFile(filePath).collect { values ->
+                        val ticker = values["ticker"]
+                        if (currentTicker != ticker && currentTicker != null) {
+                            send(currentList.toList())
+                            currentList.clear()
+                        }
+                        currentTicker = ticker
+                        currentList.add(values)
+                    }
+                    if (currentList.isNotEmpty()) {
+                        send(currentList.toList())
+                    }
                 }
-                currentTicker = ticker
-                currentList.add(values)
-            }
-            if (currentList.isNotEmpty()) {
-                emit(currentList.toList())
-            }
+            }.toList().awaitAll()
         }
     }
     
