@@ -63,7 +63,7 @@ class Application  {
             add(Utils.actionFu("Browse Data") {
                 JDialog(mainFrame,"Data Browser", false).apply {
                     contentPane.add(BorderLayout.CENTER, StockDataBrowser(docStore.get(Stocks::class.java, "stocks")))
-                    preferredSize = Dimension(800,800)
+                    preferredSize = Dimension(1200, 900)
                     pack()
                     isVisible = true
                 }
