@@ -34,13 +34,13 @@ class CandlePlotter {
         if (candleData.isEmpty()) return
 
         val bounds = graphics2D.clipBounds ?: return
-        val candleWidth = bounds.width.toDouble() / 15
+        val candleWidth = bounds.width.toDouble() / 20
         val wickWidth = candleWidth / 2
 
-        // Find price range for scaling
+        // Find price range for scaling - filter out NaN values which represent placeholders
         val allPrices = candleData.flatMap { candle ->
             listOf(candle.open, candle.high, candle.low, candle.close)
-        }.filter { it > 0 }
+        }.filter { !it.isNaN() && it > 0 }
 
         if (allPrices.isEmpty()) return
 
@@ -57,13 +57,19 @@ class CandlePlotter {
 
         try {
             candleData.forEachIndexed { index, candle ->
-                val x = index * candleWidth
+                // Skip candles with NaN values (placeholders)
+                if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
+                    // Skip this placeholder candle
+                    return@forEachIndexed
+                }
+
+                val x = (index * candleWidth) + bounds.x
 
                 // Scale prices to fit the graphics bounds
-                val openY = bounds.height - ((candle.open - minPrice) / priceRange * bounds.height)
-                val highY = bounds.height - ((candle.high - minPrice) / priceRange * bounds.height)
-                val lowY = bounds.height - ((candle.low - minPrice) / priceRange * bounds.height)
-                val closeY = bounds.height - ((candle.close - minPrice) / priceRange * bounds.height)
+                val openY = (bounds.y + bounds.height) - ((candle.open - minPrice) / priceRange * bounds.height)
+                val highY = (bounds.y + bounds.height) - ((candle.high - minPrice) / priceRange * bounds.height)
+                val lowY = (bounds.y + bounds.height) - ((candle.low - minPrice) / priceRange * bounds.height)
+                val closeY = (bounds.y + bounds.height) - ((candle.close - minPrice) / priceRange * bounds.height)
 
                 // Calculate body bounds
                 val bodyTop = minOf(openY, closeY)
@@ -119,13 +125,13 @@ class CandlePlotter {
         if (candleData.isEmpty()) return
 
         val bounds = graphics2D.clipBounds ?: return
-        val candleWidth = bounds.width.toDouble() / 15
+        val candleWidth = bounds.width.toDouble() / 20
         val wickWidth = candleWidth / 2
 
-        // Find price range for scaling
+        // Find price range for scaling - filter out NaN values which represent placeholders
         val allPrices = candleData.flatMap { candle ->
             listOf(candle.open, candle.high, candle.low, candle.close)
-        }.filter { it > 0 }
+        }.filter { !it.isNaN() && it > 0 }
 
         if (allPrices.isEmpty()) return
 
@@ -142,13 +148,19 @@ class CandlePlotter {
 
         try {
             candleData.forEachIndexed { index, candle ->
-                val x = index * candleWidth
+                // Skip candles with NaN values (placeholders)
+                if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
+                    // Skip this placeholder candle
+                    return@forEachIndexed
+                }
+
+                val x = (index * candleWidth) + bounds.x
 
                 // Scale prices to fit the graphics bounds
-                val openY = bounds.height - ((candle.open - minPrice) / priceRange * bounds.height)
-                val highY = bounds.height - ((candle.high - minPrice) / priceRange * bounds.height)
-                val lowY = bounds.height - ((candle.low - minPrice) / priceRange * bounds.height)
-                val closeY = bounds.height - ((candle.close - minPrice) / priceRange * bounds.height)
+                val openY = (bounds.y + bounds.height) - ((candle.open - minPrice) / priceRange * bounds.height)
+                val highY = (bounds.y + bounds.height) - ((candle.high - minPrice) / priceRange * bounds.height)
+                val lowY = (bounds.y + bounds.height) - ((candle.low - minPrice) / priceRange * bounds.height)
+                val closeY = (bounds.y + bounds.height) - ((candle.close - minPrice) / priceRange * bounds.height)
 
                 // Calculate body bounds
                 val bodyTop = minOf(openY, closeY)
@@ -286,7 +298,11 @@ class CandlePlotter {
             }
         }
 
-        if (relevantData.isEmpty()) return null
+        if (relevantData.isEmpty()) {
+            // Return a placeholder with null values that won't be plotted
+            // but still represents the time range for continuity
+            return CandleInfo(startTime, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0)
+        }
 
         // Data should already be ordered, but ensure it for aggregation
         relevantData.sortBy { it[MetricConstants.Candle.TIME.value].toLong() }
