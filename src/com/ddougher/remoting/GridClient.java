@@ -33,7 +33,7 @@ public class GridClient implements Closeable {
 		this.address = address;
 	}
 
-	void start() {
+	public void start() {
 		synchronized (this) {
 			(thread = new Thread(SharedResources.withStackDumpOnException(this::run))).start();
 			try {
