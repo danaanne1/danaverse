@@ -113,24 +113,108 @@ class RemoteDocumentStore(
 
 ## Client-Side Implementation
 
-### Direct Proxy Instantiation
+### Client-Side Delegation
+
+To ensure proper document store references are maintained across the remote boundary, we need to implement client-side delegation that automatically sets the document store reference on retrieved objects:
 
 ```kotlin
-// Direct instantiation of the remote document store proxy
-fun createRemoteDocumentStore(
-    serverAddress: InetSocketAddress,
-    remoteStoreDirectory: String
-): DocumentStore {
-    val client = GridClient(serverAddress)
-    client.start()
-    
-    // Directly create a proxy to the remote document store
-    return client.createRemoteObject(
+/**
+ * Client-side wrapper for RemoteDocumentStore that automatically sets
+ * the document store reference on retrieved objects
+ */
+class RemoteDocumentStoreClient(
+    private val serverAddress: InetSocketAddress,
+    private val remoteStoreDirectory: String
+) : DocumentStore {
+    private val client: GridClient = GridClient(serverAddress).apply { start() }
+    private val remoteStore: DocumentStore = client.createRemoteObject(
         DocumentStore::class.java,
         RemoteDocumentStore::class.java,
         arrayOf(String::class.java),
         arrayOf(remoteStoreDirectory)
     )
+    
+    // Override get methods to set document store reference on retrieved objects
+    override fun <T : DocumentView> get(viewClass: Class<T>, key: String): T {
+        val result = remoteStore.get(viewClass, key)
+        result.setDocumentStore(this)
+        return result
+    }
+    
+    override fun get(key: String): Document {
+        val result = remoteStore.get(key)
+        if (result is DocumentStoreAware) {
+            result.setDocumentStore(this)
+        }
+        return result
+    }
+    
+    override fun <T : DocumentView> lock(viewClass: Class<T>, key: String): T {
+        val result = remoteStore.lock(viewClass, key)
+        result.setDocumentStore(this)
+        return result
+    }
+    
+    override fun lock(key: String): Document {
+        val result = remoteStore.lock(key)
+        if (result is DocumentStoreAware) {
+            result.setDocumentStore(this)
+        }
+        return result
+    }
+    
+    // For new instances, set the document store reference
+    override fun <T : DocumentView> newInstance(viewClass: Class<T>): T {
+        val result = remoteStore.newInstance(viewClass)
+        result.setDocumentStore(this)
+        return result
+    }
+    
+    override fun <T : DocumentView> newInstance(viewClass: Class<T>, key: String): T {
+        val result = remoteStore.newInstance(viewClass, key)
+        result.setDocumentStore(this)
+        return result
+    }
+    
+    // Delegate other methods directly to the remote store
+    override fun getID(document: Document): String = remoteStore.getID(document)
+    
+    override fun newInstance(): Document {
+        val result = remoteStore.newInstance()
+        if (result is DocumentStoreAware) {
+            result.setDocumentStore(this)
+        }
+        return result
+    }
+    
+    override fun newInstance(key: String): Document {
+        val result = remoteStore.newInstance(key)
+        if (result is DocumentStoreAware) {
+            result.setDocumentStore(this)
+        }
+        return result
+    }
+    
+    override fun release(document: Document) = remoteStore.release(document)
+    override fun put(document: Document) = remoteStore.put(document)
+    override fun delete(document: Document) = remoteStore.delete(document)
+    
+    // Close the client connection when done
+    fun close() {
+        client.close()
+    }
+}
+```
+
+### Direct Proxy Instantiation
+
+```kotlin
+// Factory method to create a RemoteDocumentStoreClient
+fun createRemoteDocumentStore(
+    serverAddress: InetSocketAddress,
+    remoteStoreDirectory: String
+): DocumentStore {
+    return RemoteDocumentStoreClient(serverAddress, remoteStoreDirectory)
 }
 ```
 
@@ -173,12 +257,15 @@ if (preferences.node("RemoteStore").getBoolean("enabled", false)) {
     val remoteStoreDirectory = preferences.node("DocStore").get("remoteStoreDirectory", Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote")
     val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
 
-    // Create remote store directly
+    // Create remote store with client-side delegation
     val remoteStore = createRemoteDocumentStore(
         serverAddress,
         remoteStoreDirectory
     )
-
+    
+    // The RemoteDocumentStoreClient automatically sets the document store reference
+    // on all retrieved objects, eliminating the need for manual setDocumentStore calls
+    
     // Make the remote store available to the application
     // This could be through a service locator, dependency injection, or direct reference
     application.setRemoteDocumentStore(remoteStore)
@@ -274,5 +361,7 @@ class Constants {
 ## Conclusion
 
 This design provides a foundation for adding a remote document store capability to the Danaverse application. By implementing the document store on the remote server, we enable applications to access a shared data repository for distributed applications.
+
+The client-side delegation approach ensures that document store references are automatically maintained across the remote boundary, eliminating the need for manual `setDocumentStore` calls that were previously required. For both DocumentView objects and Document objects that implement DocumentStoreAware, the client automatically sets the document store reference. This makes the remote document store more user-friendly and less error-prone.
 
 The implementation follows the principle of making minimal necessary changes to the existing codebase while providing a powerful new capability. The remote document store operates independently from the local store, giving applications flexibility in how they manage and access data across different environments.
