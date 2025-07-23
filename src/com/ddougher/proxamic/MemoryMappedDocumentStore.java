@@ -26,7 +26,7 @@ import com.ddougher.proxamic.Setter;
  * 
  * @author Dana
  */
-public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Serializable, Closeable, ObservableDocumentStore {
+public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Closeable, ObservableDocumentStore {
 
 	private static final long serialVersionUID = 1L;
 	MemoryMappedAssetFactory assetFactory;
@@ -247,7 +247,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		if ( 
 				( storageRecord != null )
 				&& ( storageRecord.lockedUntil > System.currentTimeMillis() )
-				&& ( document == null || storageRecord.lockId != document.as(MemoryMappedDocument.class).LOCK() ) 
+				&& ( document == null || !Objects.equals(storageRecord.lockId, document.as(MemoryMappedDocument.class).LOCK()))
 		) {
 			throw new ConcurrentModificationException("Not the lock holder.");
 		}

@@ -33,7 +33,8 @@ public class BuffDocument implements Document, DocumentStoreAware {
 	}
 	
 	/**
-	 * If the document store is serializable (see network aware doc stores) then this will serialize the doc store
+	 * If the document store is network aware (see network aware doc stores) then this will export the doc store
+	 * endpoint information
 	 * followed by the document id. It is the responsibility of the caller to save documents before serialization.
 	 * <p>
 	 * If the document store is not serializable, will serialize the document as a byte stream
@@ -48,13 +49,13 @@ public class BuffDocument implements Document, DocumentStoreAware {
 		if (Proxy.isProxyClass(docStore.getClass())) {
 			for (Class<?> c: docStore.getClass().getInterfaces()) {
 				if (Serializable.class.isAssignableFrom(c)) {
-					out.writeObject(docStore);
+					out.writeObject(((NetworkAware)docStore).getEndpoint());
 					out.writeObject(docStore.getID(this));
 					return;
 				}
 			}
-		} else if (docStore instanceof Serializable) {
-			out.writeObject(docStore);
+		} else if (docStore instanceof NetworkAware) {
+			out.writeObject(((NetworkAware)docStore).getEndpoint());
 			out.writeObject(docStore.getID(this));
 			return;
 		}
