@@ -26,7 +26,7 @@ import com.ddougher.proxamic.Setter;
  * 
  * @author Dana
  */
-public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Closeable, ObservableDocumentStore {
+public class MemoryMappedDocumentStore extends AbstractDocumentStore implements DocumentStore, Serializable, Closeable, ObservableDocumentStore {
 
 	private static final long serialVersionUID = 1L;
 	MemoryMappedAssetFactory assetFactory;

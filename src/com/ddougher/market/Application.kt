@@ -4,19 +4,26 @@ import com.ddougher.market.application.CSVImporter
 import com.ddougher.market.application.StockDataBrowser
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.polygon.BackfilTickers
+import com.ddougher.proxamic.DocumentStore
 import com.ddougher.proxamic.MemoryMappedDocumentStore
+import com.ddougher.remotes.RemoteDocumentStoreClient
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.awt.event.ActionEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import javax.swing.AbstractAction
+import javax.swing.Action
+import javax.swing.JOptionPane
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+import java.net.InetSocketAddress
 import java.util.*
 import java.util.prefs.Preferences
 import javax.swing.*
@@ -25,13 +32,21 @@ import javax.swing.*
 class Application  {
 
     val preferences = Preferences.userNodeForPackage(javaClass).apply {
-        node("DocStore").apply { put(com.ddougher.market.Constants.DOC_STORE_BASE_PATH_KEY, get(com.ddougher.market.Constants.DOC_STORE_BASE_PATH_KEY, com.ddougher.market.Constants.DOC_STORE_DEFAULT_FOLDER_NAME)) }
-        node( "Polygon").apply { put("apiKey", get("apiKey", "unknown")) }
+        node(Constants.DOC_STORE_NODE).apply { 
+            put(Constants.DOC_STORE_BASE_PATH_KEY, get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME))
+            put(Constants.REMOTE_STORE_DIRECTORY_KEY, get(Constants.REMOTE_STORE_DIRECTORY_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote"))
+        }
+        node(Constants.REMOTE_STORE_NODE).apply { 
+            put(Constants.REMOTE_STORE_HOST_KEY, get(Constants.REMOTE_STORE_HOST_KEY, "localhost"))
+            putInt(Constants.REMOTE_STORE_PORT_KEY, getInt(Constants.REMOTE_STORE_PORT_KEY, 3262))
+            putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, getBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false))
+        }
+        node("Polygon").apply { put("apiKey", get("apiKey", "unknown")) }
     }
 
 
     val docStore: MemoryMappedDocumentStore =
-            preferences.node("DocStore").get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME).let { path ->
+            preferences.node(Constants.DOC_STORE_NODE).get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME).let { path ->
                 @Suppress("ComplexRedundantLet")
                 File(path).apply { mkdirs() }.let { File(it, "Database.dt1") }.let { file ->
                     if (file.exists())
@@ -40,16 +55,76 @@ class Application  {
                         MemoryMappedDocumentStore(Optional.of(path), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
                 }
             }
+            
+    // Remote document store (initialized if enabled in preferences)
+    val remoteStore: DocumentStore? = if (preferences.node(Constants.REMOTE_STORE_NODE).getBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)) {
+        // Get remote store configuration from preferences
+        val remoteServerHost = preferences.node(Constants.REMOTE_STORE_NODE).get(Constants.REMOTE_STORE_HOST_KEY, "localhost")
+        val remoteServerPort = preferences.node(Constants.REMOTE_STORE_NODE).getInt(Constants.REMOTE_STORE_PORT_KEY, 3262)
+        val remoteStoreDirectory = preferences.node(Constants.DOC_STORE_NODE).get(Constants.REMOTE_STORE_DIRECTORY_KEY, 
+            Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote")
+        
+        // Create the remote document store client
+        val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
+        RemoteDocumentStoreClient(serverAddress, remoteStoreDirectory)
+    } else {
+        null
+    }
 
     inner class View {
 
         val desktopPane = JDesktopPane()
+        
+        // Status bar for displaying connection status
+        val statusBar = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createEtchedBorder()
+            add(JLabel("Local document store: Connected"), BorderLayout.WEST)
+            
+            // Remote connection status label
+            val remoteStatusLabel = JLabel().apply {
+                text = if (remoteStore != null) 
+                    "Remote document store: Connected" 
+                else 
+                    "Remote document store: Disabled"
+            }
+            add(remoteStatusLabel, BorderLayout.EAST)
+        }
 
-
+        // Remote connection action that updates based on connection state
+        val remoteConnectionAction = object : AbstractAction() {
+            init {
+                putValue(Action.NAME, if (remoteStore == null) "Connect to Remote Store" else "Disconnect from Remote Store")
+            }
+            
+            override fun actionPerformed(e: ActionEvent) {
+                if (remoteStore == null) {
+                    // Enable remote store in preferences and restart required
+                    preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, true)
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Remote document store has been enabled.\nPlease restart the application to connect.",
+                        "Restart Required",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                } else {
+                    // Disable remote store in preferences and restart required
+                    preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Remote document store has been disabled.\nPlease restart the application to disconnect.",
+                        "Restart Required",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                }
+            }
+        }
+        
         val toolsMenu: JMenu = JMenu("File").apply {
             add(Utils.actionFu("Preferences") {
                 preferencesDialog.isVisible = true
             })
+            add(remoteConnectionAction)
+            addSeparator()
             add(Utils.actionFu("Backfill Common Stock Tickers") {
                 GlobalScope.launch {
                     BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
@@ -81,7 +156,10 @@ class Application  {
             addWindowListener(object : WindowAdapter() {
                 override fun windowClosing(e: WindowEvent) { this@Application.stop() }
             })
-            rootPane.contentPane.add(BorderLayout.CENTER, desktopPane)
+            rootPane.contentPane.apply {
+                add(BorderLayout.CENTER, desktopPane)
+                add(BorderLayout.SOUTH, statusBar)
+            }
             rootPane.jMenuBar = mainMenuBar
             pack()
         }
@@ -100,15 +178,34 @@ class Application  {
         }
     }
 
+    /**
+     * Gets the remote document store if it's enabled and initialized
+     * 
+     * @return The remote document store or null if not enabled
+     */
+    fun getRemoteDocumentStore(): DocumentStore? {
+        return remoteStore
+    }
+    
     fun stop() {
+        // Close the local document store
         docStore.close()
-        preferences.node("DocStore").get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME).also { path ->
+        preferences.node(Constants.DOC_STORE_NODE).get(Constants.DOC_STORE_BASE_PATH_KEY, Constants.DOC_STORE_DEFAULT_FOLDER_NAME).also { path ->
             @Suppress("ComplexRedundantLet")
             File(path).apply { mkdirs() }.let { File(it, "Database.dt1") }.apply {
                 ObjectOutputStream(BufferedOutputStream(outputStream(), 65536)).use { it.writeObject(docStore) }
             }
         }
-        println("Docstore closed")
+        println("Local document store closed")
+        
+        // Close the remote document store if it exists
+        remoteStore?.let {
+            if (it is RemoteDocumentStoreClient) {
+                it.close()
+                println("Remote document store connection closed")
+            }
+        }
+        
         SwingUtilities.invokeLater {
             view.mainFrame.dispose()
         }
