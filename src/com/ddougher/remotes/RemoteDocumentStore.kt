@@ -7,6 +7,14 @@ import com.ddougher.proxamic.MemoryMappedDocumentStore
 import java.io.*
 import java.util.*
 import java.util.function.Consumer
+import java.util.stream.Stream
+
+
+
+
+interface  IRemoteDocumentStore: DocumentStore {
+    fun keys(start: String?, end: String?): Set<String>
+}
 
 /**
  * A document store implementation that runs on a remote server.
@@ -14,7 +22,7 @@ import java.util.function.Consumer
  */
 class RemoteDocumentStore(
     private val storePath: String
-) : DocumentStore {
+) : IRemoteDocumentStore {
     
     /**
      * Public access to the singleton document store
@@ -53,7 +61,12 @@ class RemoteDocumentStore(
     override fun delete(document: Document) {
         documentStore.delete(document)
     }
-    
+
+    override fun keys(start:String?, end:String?): Set<String> {
+        val keys = documentStore.keys()
+        if (keys.isEmpty()) return keys
+        return documentStore.keys().subSet(start?:keys.first, true, end?:keys.last, true)
+    }
 
     /**
      * Singleton implementation for the document store

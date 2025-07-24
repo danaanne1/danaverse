@@ -7,6 +7,7 @@ import com.ddougher.proxamic.DocumentView
 import com.ddougher.remoting.GridClient
 import java.net.InetSocketAddress
 import java.util.function.Consumer
+import java.util.stream.Stream
 
 /**
  * Client-side wrapper for RemoteDocumentStore that automatically sets
@@ -17,8 +18,8 @@ class RemoteDocumentStoreClient(
     private val remoteStoreDirectory: String
 ) : DocumentStore {
     private val client: GridClient = GridClient(serverAddress).apply { start() }
-    private val remoteStore: DocumentStore = client.createRemoteObject(
-        DocumentStore::class.java,
+    private val remoteStore: IRemoteDocumentStore = client.createRemoteObject(
+        IRemoteDocumentStore::class.java,
         RemoteDocumentStore::class.java,
         arrayOf(String::class.java),
         arrayOf(remoteStoreDirectory)
@@ -89,7 +90,10 @@ class RemoteDocumentStoreClient(
         }
         remoteStore.delete(document)
     }
-    
+
+    override fun traverseKeys(startKey: String?, endKey: String?): Stream<String?>? {
+        return remoteStore.keys(startKey, endKey).stream() as Stream<String?>?
+    }
 
     // Close the client connection when done
     fun close() {

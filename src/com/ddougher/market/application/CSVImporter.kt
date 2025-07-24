@@ -101,7 +101,7 @@ class CSVImporter(val app: Application) {
     fun doImportFrom(directoryPath: String) {
         val recordChannel = Channel<List<Map<String, String>>>(100)
 
-        app.docStore.transact { ds ->
+        app.selectedDocStore.transact { ds ->
             runBlocking {
                 coroutineScope {
                     val stocksLock = Mutex()

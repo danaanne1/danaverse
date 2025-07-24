@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import com.ddougher.proxamic.ObservableDocumentStore.Listener.DocumentEvent;
 import com.ddougher.util.AssetFactory.Addressable;
@@ -133,6 +134,11 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 
 	public NavigableSet<String> keys() {
 		return Collections.unmodifiableNavigableSet(index.keySet());
+	}
+
+	@Override
+	public Stream<String> traverseKeys(String startKey, String endKey) {
+		return index.keySet().stream();
 	}
 
 	@Override

@@ -70,6 +70,9 @@ class Application  {
     } else {
         null
     }
+    
+    // Currently selected document store (defaults to local store)
+    var selectedDocStore: DocumentStore = docStore
 
     inner class View {
 
@@ -90,32 +93,28 @@ class Application  {
             add(remoteStatusLabel, BorderLayout.EAST)
         }
 
-        // Remote connection action that updates based on connection state
-        val remoteConnectionAction = object : AbstractAction() {
-            init {
-                putValue(Action.NAME, if (remoteStore == null) "Connect to Remote Store" else "Disconnect from Remote Store")
-            }
-            
-            override fun actionPerformed(e: ActionEvent) {
-                if (remoteStore == null) {
-                    // Enable remote store in preferences and restart required
-                    preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, true)
-                    JOptionPane.showMessageDialog(
-                        mainFrame,
-                        "Remote document store has been enabled.\nPlease restart the application to connect.",
-                        "Restart Required",
-                        JOptionPane.INFORMATION_MESSAGE
-                    )
-                } else {
-                    // Disable remote store in preferences and restart required
-                    preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)
-                    JOptionPane.showMessageDialog(
-                        mainFrame,
-                        "Remote document store has been disabled.\nPlease restart the application to disconnect.",
-                        "Restart Required",
-                        JOptionPane.INFORMATION_MESSAGE
-                    )
-                }
+        // Remote connection action using Utils.actionFu
+        val remoteConnectionAction = Utils.actionFu(
+            if (remoteStore == null) "Connect to Remote Store" else "Disconnect from Remote Store"
+        ) {
+            if (remoteStore == null) {
+                // Enable remote store in preferences and restart required
+                preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, true)
+                JOptionPane.showMessageDialog(
+                    mainFrame,
+                    "Remote document store has been enabled.\nPlease restart the application to connect.",
+                    "Restart Required",
+                    JOptionPane.INFORMATION_MESSAGE
+                )
+            } else {
+                // Disable remote store in preferences and restart required
+                preferences.node(Constants.REMOTE_STORE_NODE).putBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)
+                JOptionPane.showMessageDialog(
+                    mainFrame,
+                    "Remote document store has been disabled.\nPlease restart the application to disconnect.",
+                    "Restart Required",
+                    JOptionPane.INFORMATION_MESSAGE
+                )
             }
         }
         
@@ -124,10 +123,80 @@ class Application  {
                 preferencesDialog.isVisible = true
             })
             add(remoteConnectionAction)
+            
+            // Add action to select document store
+            add(Utils.actionFu("Select Document Store") {
+                val options = arrayOf("Local Store", "Remote Store")
+                val initialSelection = if (selectedDocStore == docStore) 0 else 1
+                
+                val selection = JOptionPane.showOptionDialog(
+                    mainFrame,
+                    "Select which document store to use:",
+                    "Document Store Selection",
+                    JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.QUESTION_MESSAGE,
+                    null,
+                    options,
+                    options[initialSelection]
+                )
+                
+                if (selection == 0) {
+                    // Local store selected
+                    selectedDocStore = docStore
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Local document store selected.",
+                        "Document Store Selection",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                } else if (selection == 1 && remoteStore != null) {
+                    // Remote store selected
+                    selectedDocStore = remoteStore
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Remote document store selected.",
+                        "Document Store Selection",
+                        JOptionPane.INFORMATION_MESSAGE
+                    )
+                } else if (selection == 1) {
+                    // Remote store selected but not available
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Remote document store is not available.\nPlease connect to a remote store first.",
+                        "Document Store Selection",
+                        JOptionPane.WARNING_MESSAGE
+                    )
+                }
+            })
+            
+            // Add action to copy between document stores
+            add(Utils.actionFu("Copy Document Store") {
+                if (remoteStore == null) {
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Remote document store is not available.\nPlease connect to a remote store first.",
+                        "Copy Failed",
+                        JOptionPane.WARNING_MESSAGE
+                    )
+                } else {
+                    // Create and show the document store copy helper
+                    com.ddougher.market.application.DocumentStoreCopyHelper(this@Application).showCopyDialog()
+                }
+            })
+            
             addSeparator()
             add(Utils.actionFu("Backfill Common Stock Tickers") {
-                GlobalScope.launch {
-                    BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
+                if (selectedDocStore == docStore) {
+                    GlobalScope.launch {
+                        BackfilTickers(docStore, preferences.node("Polygon").get("apiKey", "unknown")).getCommonStocks()
+                    }
+                } else {
+                    JOptionPane.showMessageDialog(
+                        mainFrame,
+                        "Backfill operation is only available with the local document store.\nPlease select the local document store first.",
+                        "Operation Not Available",
+                        JOptionPane.WARNING_MESSAGE
+                    )
                 }
             })
             add(Utils.actionFu("Backfill from csv") {
@@ -137,7 +206,7 @@ class Application  {
             })
             add(Utils.actionFu("Browse Data") {
                 JDialog(mainFrame,"Data Browser", false).apply {
-                    contentPane.add(BorderLayout.CENTER, StockDataBrowser(docStore.get(Stocks::class.java, "stocks")))
+                    contentPane.add(BorderLayout.CENTER, StockDataBrowser(selectedDocStore.get(Stocks::class.java, "stocks")))
                     preferredSize = Dimension(1200, 900)
                     pack()
                     isVisible = true

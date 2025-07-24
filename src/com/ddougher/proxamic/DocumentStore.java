@@ -1,10 +1,17 @@
 package com.ddougher.proxamic;
 
+import javax.print.Doc;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 /**
  * A place to store and retrieve documents.
  */
+@SuppressWarnings("RedundantOperationOnEmptyContainer")
 public interface DocumentStore {
 
 	/**
@@ -50,8 +57,16 @@ public interface DocumentStore {
 
 	public void delete(Document document);
 
+	/**
+	 *  Returns all the keys between startKey and endKey. If startKey == null, then starts from the beginning. Likewise if endKey == null ends at the end.
+	 */
+	public default Stream<String> traverseKeys(String startKey, String endKey) { List<String> s = Collections.emptyList(); return s.stream(); }
+
+	public default Stream<Document> traverseDocuments(String startKey, String endKey) { return traverseKeys(startKey,endKey).map(this::get); }
+
+
 	// Syntactic sugar methods:
-	
+
 	public default <T extends DocumentView> String getID(T documentView) { return getID(documentView.document()); }
 	
 	public default <T extends DocumentView> T newInstance(Class<T> viewClass) { return newInstance().as(viewClass); }
