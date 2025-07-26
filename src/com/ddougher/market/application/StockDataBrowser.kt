@@ -254,6 +254,12 @@ class StockDataBrowser(val stocks: Stocks): JPanel(BorderLayout()) {
                 )
                 g2d.clip = clipRect
 
+                // Pre-transform graphics to map visible space to 100x100 coordinate system
+                val scaleX = clipRect.width / 100.0
+                val scaleY = clipRect.height / 100.0
+                g2d.translate(clipRect.x, clipRect.y)
+                g2d.scale(scaleX, scaleY)
+
                 // Render candles
                 candlePlotter.plotCandles(selectedEquity!!, selectedTime, g2d)
             } finally {
