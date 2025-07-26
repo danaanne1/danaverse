@@ -29,12 +29,14 @@ class CandlePlotter {
      *
      * the graphics is in 16 bit greyscale
      */
-    fun plotCandles(equity: Equity, endTime: Long, graphics2D: Graphics2D) {
+    fun plotCandles(equity: Equity, endTime: Long, graphics2D: Graphics2D, color: Color = Color.BLACK) {
         val candleData = collectCandleData(equity, endTime)
         if (candleData.isEmpty()) return
 
-        val bounds = graphics2D.clipBounds ?: return
-        val candleWidth = bounds.width.toDouble() / 20
+        // Since graphics is pre-transformed to 100x100 coordinate system
+        val canvasWidth = 100.0
+        val canvasHeight = 100.0
+        val candleWidth = canvasWidth / 20.0
         val wickWidth = candleWidth / 2
 
         // Find price range for scaling - filter out NaN values which represent placeholders
@@ -50,52 +52,44 @@ class CandlePlotter {
 
         if (priceRange <= 0) return
 
-        // Set up graphics for additive rendering with specified alpha
-        // val originalComposite = graphics2D.composite
-        // graphics2D.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f / (1 shl 16))
-        graphics2D.color = Color.BLACK
-
-        try {
-            candleData.forEachIndexed { index, candle ->
-                // Skip candles with NaN values (placeholders)
-                if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
-                    // Skip this placeholder candle
-                    return@forEachIndexed
-                }
-
-                val x = (index * candleWidth) + bounds.x
-
-                // Scale prices to fit the graphics bounds
-                val openY = (bounds.y + bounds.height) - ((candle.open - minPrice) / priceRange * bounds.height)
-                val highY = (bounds.y + bounds.height) - ((candle.high - minPrice) / priceRange * bounds.height)
-                val lowY = (bounds.y + bounds.height) - ((candle.low - minPrice) / priceRange * bounds.height)
-                val closeY = (bounds.y + bounds.height) - ((candle.close - minPrice) / priceRange * bounds.height)
-
-                // Calculate body bounds
-                val bodyTop = minOf(openY, closeY)
-                val bodyBottom = maxOf(openY, closeY)
-                val bodyHeight = bodyBottom - bodyTop
-
-                // Calculate wick center position
-                val wickX = x + candleWidth / 2 - wickWidth / 2
-
-                // Draw upper wick (from high to top of body) - only if there's space above the body
-                if (highY < bodyTop) {
-                    graphics2D.fill(Rectangle2D.Double(wickX, highY, wickWidth, bodyTop - highY))
-                }
-
-                // Draw lower wick (from bottom of body to low) - only if there's space below the body
-                if (lowY > bodyBottom) {
-                    graphics2D.fill(Rectangle2D.Double(wickX, bodyBottom, wickWidth, lowY - bodyBottom))
-                }
-
-                // Draw body (open-close rectangle)
-                if (bodyHeight > 0) {
-                    graphics2D.fill(Rectangle2D.Double(x, bodyTop, candleWidth, bodyHeight))
-                }
+        candleData.forEachIndexed { index, candle ->
+            // Skip candles with NaN values (placeholders)
+            if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
+                // Skip this placeholder candle
+                return@forEachIndexed
             }
-        } finally {
-            // graphics2D.composite = originalComposite
+
+            // Calculate x position in 100x100 space
+            val x = index * candleWidth
+
+            // Scale prices to fit the 100x100 coordinate space
+            val openY = canvasHeight - ((candle.open - minPrice) / priceRange * canvasHeight)
+            val highY = canvasHeight - ((candle.high - minPrice) / priceRange * canvasHeight)
+            val lowY = canvasHeight - ((candle.low - minPrice) / priceRange * canvasHeight)
+            val closeY = canvasHeight - ((candle.close - minPrice) / priceRange * canvasHeight)
+
+            // Calculate body bounds
+            val bodyTop = minOf(openY, closeY)
+            val bodyBottom = maxOf(openY, closeY)
+            val bodyHeight = bodyBottom - bodyTop
+
+            // Calculate wick center position
+            val wickX = x + candleWidth / 2 - wickWidth / 2
+
+            // Draw upper wick (from high to top of body) - only if there's space above the body
+            if (highY < bodyTop) {
+                graphics2D.fill(Rectangle2D.Double(wickX, highY, wickWidth, bodyTop - highY))
+            }
+
+            // Draw lower wick (from bottom of body to low) - only if there's space below the body
+            if (lowY > bodyBottom) {
+                graphics2D.fill(Rectangle2D.Double(wickX, bodyBottom, wickWidth, lowY - bodyBottom))
+            }
+
+            // Draw body (open-close rectangle)
+            if (bodyHeight > 0) {
+                graphics2D.fill(Rectangle2D.Double(x, bodyTop, candleWidth, bodyHeight))
+            }
         }
     }
 
@@ -124,8 +118,10 @@ class CandlePlotter {
         val candleData = collectCandleData(equity, endTime)
         if (candleData.isEmpty()) return
 
-        val bounds = graphics2D.clipBounds ?: return
-        val candleWidth = bounds.width.toDouble() / 20
+        // Since graphics is pre-transformed to 100x100 coordinate system
+        val canvasWidth = 100.0
+        val canvasHeight = 100.0
+        val candleWidth = canvasWidth / 20.0
         val wickWidth = candleWidth / 2
 
         // Find price range for scaling - filter out NaN values which represent placeholders
@@ -146,41 +142,38 @@ class CandlePlotter {
         // graphics2D.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f / (1 shl 16))
         graphics2D.color = Color.BLACK
 
-        try {
-            candleData.forEachIndexed { index, candle ->
-                // Skip candles with NaN values (placeholders)
-                if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
-                    // Skip this placeholder candle
-                    return@forEachIndexed
-                }
-
-                val x = (index * candleWidth) + bounds.x
-
-                // Scale prices to fit the graphics bounds
-                val openY = (bounds.y + bounds.height) - ((candle.open - minPrice) / priceRange * bounds.height)
-                val highY = (bounds.y + bounds.height) - ((candle.high - minPrice) / priceRange * bounds.height)
-                val lowY = (bounds.y + bounds.height) - ((candle.low - minPrice) / priceRange * bounds.height)
-                val closeY = (bounds.y + bounds.height) - ((candle.close - minPrice) / priceRange * bounds.height)
-
-                // Calculate body bounds
-                val bodyTop = minOf(openY, closeY)
-                val bodyBottom = maxOf(openY, closeY)
-                val bodyHeight = bodyBottom - bodyTop
-
-                // Position wick adjacent to the body (at the right side of the candle space)
-                val wickX = x + candleWidth - wickWidth
-
-                // Draw upper wick (from high to low, full range)
-                graphics2D.fill(Rectangle2D.Double(wickX, highY, wickWidth, lowY - highY))
-
-                // Draw body (open-close rectangle) - positioned to leave room for adjacent wick
-                if (bodyHeight > 0) {
-                    val bodyWidth = candleWidth - wickWidth
-                    graphics2D.fill(Rectangle2D.Double(x, bodyTop, bodyWidth, bodyHeight))
-                }
+        candleData.forEachIndexed { index, candle ->
+            // Skip candles with NaN values (placeholders)
+            if (candle.open.isNaN() || candle.high.isNaN() || candle.low.isNaN() || candle.close.isNaN()) {
+                // Skip this placeholder candle
+                return@forEachIndexed
             }
-        } finally {
-            // graphics2D.composite = originalComposite
+
+            // Calculate x position in 100x100 space
+            val x = index * candleWidth
+
+            // Scale prices to fit the 100x100 coordinate space
+            val openY = canvasHeight - ((candle.open - minPrice) / priceRange * canvasHeight)
+            val highY = canvasHeight - ((candle.high - minPrice) / priceRange * canvasHeight)
+            val lowY = canvasHeight - ((candle.low - minPrice) / priceRange * canvasHeight)
+            val closeY = canvasHeight - ((candle.close - minPrice) / priceRange * canvasHeight)
+
+            // Calculate body bounds
+            val bodyTop = minOf(openY, closeY)
+            val bodyBottom = maxOf(openY, closeY)
+            val bodyHeight = bodyBottom - bodyTop
+
+            // Position wick adjacent to the body (at the right side of the candle space)
+            val wickX = x + candleWidth - wickWidth
+
+            // Draw upper wick (from high to low, full range)
+            graphics2D.fill(Rectangle2D.Double(wickX, highY, wickWidth, lowY - highY))
+
+            // Draw body (open-close rectangle) - positioned to leave room for adjacent wick
+            if (bodyHeight > 0) {
+                val bodyWidth = candleWidth - wickWidth
+                graphics2D.fill(Rectangle2D.Double(x, bodyTop, bodyWidth, bodyHeight))
+            }
         }
     }
 
