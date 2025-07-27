@@ -1,10 +1,7 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import java.util.EventListener;
 import java.util.EventObject;
-
-import com.ddougher.proxamic.Document;
-import com.ddougher.proxamic.DocumentStore;
 
 public interface ObservableDocumentStore extends DocumentStore {
 

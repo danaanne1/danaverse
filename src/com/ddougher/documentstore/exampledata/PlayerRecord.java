@@ -1,6 +1,6 @@
-package com.ddougher.proxamic.exampledata;
+package com.ddougher.documentstore.exampledata;
 
-import com.ddougher.proxamic.*;
+import com.ddougher.documentstore.*;
 
 import java.util.List;
 

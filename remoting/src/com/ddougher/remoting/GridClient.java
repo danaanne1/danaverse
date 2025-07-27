@@ -45,7 +45,7 @@ public class GridClient implements Closeable {
 	transient ObjectOutputStream oout;
 	transient boolean closed = false;
 	transient Thread thread;
-	transient boolean debug = true;
+	transient boolean debug = false;
 	
 	public GridClient(SocketAddress address) {
 		this.address = address;

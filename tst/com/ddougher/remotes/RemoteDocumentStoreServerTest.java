@@ -1,7 +1,7 @@
 package com.ddougher.remotes;
 
-import com.ddougher.proxamic.DocumentStore;
-import com.ddougher.proxamic.exampledata.CharacterRecord;
+import com.ddougher.documentstore.DocumentStore;
+import com.ddougher.documentstore.exampledata.CharacterRecord;
 import com.ddougher.remoting.GridServer;
 import org.junit.jupiter.api.*;
 

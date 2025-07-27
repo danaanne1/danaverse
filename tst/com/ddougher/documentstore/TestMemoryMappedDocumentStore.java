@@ -1,4 +1,4 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -27,12 +27,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.ddougher.proxamic.Document;
-import com.ddougher.proxamic.DocumentStore;
-import com.ddougher.proxamic.DocumentStoreAware;
-import com.ddougher.proxamic.LocalDocumentStore;
-import com.ddougher.proxamic.exampledata.CharacterRecord;
-import com.ddougher.proxamic.exampledata.PlayerRecord;
+import com.ddougher.documentstore.exampledata.CharacterRecord;
+import com.ddougher.documentstore.exampledata.PlayerRecord;
 
 class TestMemoryMappedDocumentStore {
 

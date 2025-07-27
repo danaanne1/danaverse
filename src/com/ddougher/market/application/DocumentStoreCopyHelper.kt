@@ -1,19 +1,13 @@
 package com.ddougher.market.application
 
 import com.ddougher.market.Application
-import com.ddougher.proxamic.DocumentStore
-import com.ddougher.proxamic.MemoryMappedDocumentStore.MemoryMappedDocument
-import com.ddougher.remotes.RemoteDocumentStoreClient
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
+import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.MemoryMappedDocumentStore.MemoryMappedDocument
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -23,9 +17,6 @@ import java.awt.GridBagLayout
 import java.awt.Insets
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
-import java.util.NavigableSet
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.ConcurrentMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.BorderFactory

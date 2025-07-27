@@ -7,10 +7,10 @@ import java.util.function.Function;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 
-import com.ddougher.proxamic.ObservableDocumentStore;
-import com.ddougher.proxamic.Document;
-import com.ddougher.proxamic.DocumentStore;
-import com.ddougher.proxamic.DocumentStoreAware;
+import com.ddougher.documentstore.ObservableDocumentStore;
+import com.ddougher.documentstore.Document;
+import com.ddougher.documentstore.DocumentStore;
+import com.ddougher.documentstore.DocumentStoreAware;
 
 public final class Utils {
 

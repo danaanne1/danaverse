@@ -1,15 +1,10 @@
 package com.ddougher.remotes
 
-import com.ddougher.proxamic.Document
-import com.ddougher.proxamic.DocumentStore
-import com.ddougher.proxamic.DocumentView
-import com.ddougher.proxamic.MemoryMappedDocumentStore
+import com.ddougher.documentstore.Document
+import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.MemoryMappedDocumentStore
 import java.io.*
 import java.util.*
-import java.util.function.Consumer
-import java.util.stream.Stream
-
-
 
 
 interface  IRemoteDocumentStore: DocumentStore {

@@ -1,7 +1,6 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 final class TransactingDocumentStore implements DocumentStore, Consumer<Consumer<DocumentStore>> {

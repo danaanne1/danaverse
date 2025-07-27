@@ -12,13 +12,14 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
+import com.ddougher.documentstore.MemoryMappedAssetFactory;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.ddougher.util.AssetFactory.Addressable;
+import com.ddougher.documentstore.AssetFactory.Addressable;
 
 
 class TestMemoryMappedAssetFactory {

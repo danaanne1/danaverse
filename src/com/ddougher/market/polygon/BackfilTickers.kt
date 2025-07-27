@@ -3,15 +3,9 @@ package com.ddougher.market.polygon
 import com.ddougher.extensions.toObject
 import com.ddougher.market.data.core.Equity
 import com.ddougher.market.data.core.Stocks
-import com.ddougher.proxamic.MemoryMappedDocumentStore
-import com.ddougher.proxamic.ObservableDocumentStore
-import com.fasterxml.jackson.databind.JsonNode
-import com.ddougher.proxamic.DocumentStore
-import java.io.BufferedInputStream
-import java.io.Closeable
+import com.ddougher.documentstore.MemoryMappedDocumentStore
+import com.ddougher.documentstore.DocumentStore
 import java.net.URL
-import java.nio.channels.Channels
-import java.util.function.Consumer
 
 class BackfilTickers(val docStore: MemoryMappedDocumentStore, val apiKey: String ) {
 

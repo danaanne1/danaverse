@@ -1,12 +1,10 @@
 package com.ddougher.remotes
 
-import com.ddougher.proxamic.Document
-import com.ddougher.proxamic.DocumentStore
-import com.ddougher.proxamic.DocumentStoreAware
-import com.ddougher.proxamic.DocumentView
+import com.ddougher.documentstore.Document
+import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.DocumentStoreAware
 import com.ddougher.remoting.GridClient
 import java.net.InetSocketAddress
-import java.util.function.Consumer
 import java.util.stream.Stream
 
 /**

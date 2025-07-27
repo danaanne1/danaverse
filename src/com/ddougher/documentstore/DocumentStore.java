@@ -1,11 +1,8 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
-import javax.print.Doc;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**

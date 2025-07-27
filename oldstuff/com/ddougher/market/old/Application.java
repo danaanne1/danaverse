@@ -57,10 +57,10 @@ import com.ddougher.market.data.Equity.Year;
 import com.ddougher.market.data.MetricConstants;
 import com.ddougher.market.data.Stocks;
 import com.ddougher.market.gui.chart.JChart;
-import com.ddougher.proxamic.MemoryMappedDocumentStore;
+import com.ddougher.documentstore.MemoryMappedDocumentStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.documentstore.DocumentStore;
 
 public class Application {
 	

@@ -1,4 +1,4 @@
-package com.ddougher.util;
+package com.ddougher.documentstore;
 
 import java.nio.ByteBuffer;
 import java.util.UUID;

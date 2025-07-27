@@ -1,4 +1,4 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 /** Tagging interface for network aware doc stores, which can support remote invocation */
 public class NetworkAware {

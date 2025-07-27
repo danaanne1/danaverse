@@ -73,7 +73,7 @@ The application follows a **layered architecture** with clear separation of conc
 - API key management through preferences
 - Asynchronous data fetching
 
-#### 5. Proxamic Module (`com.ddougher.proxamic`)
+#### 5. Proxamic Module (`com.ddougher.documentstore`)
 **Purpose**: Custom document store and data persistence
 
 **Key Components**:

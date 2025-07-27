@@ -1,4 +1,4 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import java.io.Serializable;
 

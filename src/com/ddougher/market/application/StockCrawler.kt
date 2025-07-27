@@ -1,7 +1,7 @@
 package com.ddougher.market.application
 
 import com.ddougher.market.data.core.Stocks
-import com.ddougher.proxamic.DocumentStore
+import com.ddougher.documentstore.DocumentStore
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.toList

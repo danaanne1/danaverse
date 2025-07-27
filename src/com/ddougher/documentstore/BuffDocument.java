@@ -1,4 +1,4 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import com.ddougher.buff.serialization.Array;
 import com.ddougher.buff.serialization.Struct;

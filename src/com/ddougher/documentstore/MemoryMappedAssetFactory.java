@@ -1,4 +1,4 @@
-package com.ddougher.util;
+package com.ddougher.documentstore;
 
 import java.io.Closeable;
 import java.io.File;

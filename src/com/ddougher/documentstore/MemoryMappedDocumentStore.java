@@ -1,4 +1,4 @@
-package com.ddougher.proxamic;
+package com.ddougher.documentstore;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -12,15 +12,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
-import com.ddougher.proxamic.ObservableDocumentStore.Listener.DocumentEvent;
-import com.ddougher.util.AssetFactory.Addressable;
-import com.ddougher.util.MemoryMappedAssetFactory;
-import com.ddougher.proxamic.AbstractDocumentStore;
-import com.ddougher.proxamic.Document;
-import com.ddougher.proxamic.DocumentStore;
-import com.ddougher.proxamic.DocumentView;
-import com.ddougher.proxamic.Getter;
-import com.ddougher.proxamic.Setter;
+import com.ddougher.documentstore.ObservableDocumentStore.Listener.DocumentEvent;
+import com.ddougher.documentstore.AssetFactory.Addressable;
 
 /**
  * A memory mapped document store

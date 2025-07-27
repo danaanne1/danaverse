@@ -20,7 +20,7 @@ public class GridServer {
 
 	private volatile boolean shutdown = false;
 	private transient ServerSocket serverSocket;
-	private boolean debug = true;
+	private boolean debug = false;
 	
 	public GridServer(SocketAddress address) throws IOException {
 		this.serverSocket = new ServerSocket();
