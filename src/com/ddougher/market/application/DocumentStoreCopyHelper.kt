@@ -2,11 +2,18 @@ package com.ddougher.market.application
 
 import com.ddougher.market.Application
 import com.ddougher.proxamic.DocumentStore
-import com.ddougher.proxamic.MemoryMappedDocumentStore
+import com.ddougher.proxamic.MemoryMappedDocumentStore.MemoryMappedDocument
 import com.ddougher.remotes.RemoteDocumentStoreClient
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -17,6 +24,10 @@ import java.awt.Insets
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.util.NavigableSet
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ConcurrentMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JDialog
@@ -271,45 +282,24 @@ class DocumentStoreCopyHelper(private val app: Application) {
          * Copies documents from source to destination
          * This is a placeholder implementation - the actual copy logic will be implemented by the user
          */
+        @OptIn(ExperimentalCoroutinesApi::class)
         private suspend fun copyDocuments(source: DocumentStore, destination: DocumentStore, listener: CopyProgressListener) {
-            // Get all keys from the source document store
-            val keys = when (source) {
-                is MemoryMappedDocumentStore -> source.keys()
-                else -> {
-                    // For other document store types, we need a different approach
-                    // This is a placeholder - the actual implementation will be provided by the user
-                    emptySet<String>() as NavigableSet<String>
-                }
-            }
-            
             // Start the copy process
-            listener.onCopyStart(keys.size)
-            
-            // TODO: Implement the actual copy logic
-            // This is a placeholder - the actual implementation will be provided by the user
-            
-            // For each document in the source store:
-            // 1. Get the document from the source store
-            // 2. Create a new document in the destination store with the same key
-            // 3. Copy the document data
-            // 4. Put the document in the destination store
-            // 5. Update progress
-            
-            // Simulate copy process with a delay
-            var count = 0
-            for (key in keys) {
-                // TODO: Replace this with actual copy logic
-                // This is just a placeholder to demonstrate the progress UI
-                withContext(Dispatchers.IO) {
-                    Thread.sleep(100) // Simulate work
+            val totalDocs = source.traverseKeys(null, null).count().toInt()
+            listener.onCopyStart(totalDocs)
+            val listenerMutex = Mutex()
+            val disp = Executors.newCachedThreadPool()
+
+            val count: AtomicInteger = AtomicInteger(0)
+            withContext(disp.asCoroutineDispatcher().limitedParallelism(10)) {
+                source.traverseDocuments(null, null).forEach {
+                    it.`as`(MemoryMappedDocument::class.java).withVERSION(0L)
+                    destination.put(it)
+                    listener.onDocumentCopied(source.getID(it), count.getAndAdd(1), totalDocs)
                 }
-                
-                count++
-                listener.onDocumentCopied(key, count, keys.size)
             }
-            
-            // Complete the copy process
-            listener.onCopyComplete(count)
+            listener.onCopyComplete(count.get())
+            disp.shutdown()
         }
     }
 }

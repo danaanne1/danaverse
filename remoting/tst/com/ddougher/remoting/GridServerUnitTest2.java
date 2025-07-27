@@ -1,5 +1,16 @@
 package com.ddougher.remoting;
 
+import com.ddougher.proxamic.DocumentStore;
+import com.ddougher.proxamic.MemoryDocumentStore;
+import com.ddougher.proxamic.exampledata.AbilityScore;
+import com.ddougher.proxamic.exampledata.CharacterRecord;
+import com.ddougher.proxamic.exampledata.PlayerRecord;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
@@ -7,35 +18,22 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
-import com.ddougher.proxamic.DocumentStore;
-import com.ddougher.proxamic.MemoryDocumentStore;
-import com.ddougher.proxamic.exampledata.AbilityScore;
-import com.ddougher.proxamic.exampledata.CharacterRecord;
-import com.ddougher.proxamic.exampledata.PlayerRecord;
-
-class GridServerUnitTest {
+@Disabled("Test requires specific network configuration with port 3262")
+class GridServerUnitTest2 {
 
 	transient GridServer server;
 	transient GridClient client;
 	
 	@BeforeEach
 	void setUp() throws Exception {
-		InetSocketAddress serverAddress = new InetSocketAddress(0);
-		server = new GridServer(serverAddress);
-		server.start();
-		client = new GridClient(server.getBoundAddress());
+		InetSocketAddress serverAddress = new InetSocketAddress("192.168.30.51", 3262);
+		client = new GridClient(serverAddress);
 		client.start();
 	}
 
 	@AfterEach
 	void tearDown() throws Exception {
 		client.close();
-		server.shutdown();
 	}
 
 	@Test
@@ -99,7 +97,7 @@ class GridServerUnitTest {
 			return Thread.currentThread().getId();
 		}
 		
-	
+
 	}
 	
 	public static interface TestService {
@@ -107,5 +105,5 @@ class GridServerUnitTest {
 		int add(int value);
 	}
 	
-	
+
 }

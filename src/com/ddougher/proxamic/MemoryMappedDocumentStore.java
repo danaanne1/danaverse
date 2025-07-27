@@ -109,7 +109,7 @@ public class MemoryMappedDocumentStore extends AbstractDocumentStore implements 
 		assetFactory.close();
 	}
 	
-	interface MemoryMappedDocument extends DocumentView {
+	public interface MemoryMappedDocument extends DocumentView {
 		@Getter("__ID__") String ID();
 		@Setter("__ID__") MemoryMappedDocument withID(String value);
 		@Getter("__LOCK__") String LOCK();
