@@ -171,7 +171,7 @@ class MemoryDocumentStoreTest {
 
 	public static class DelegateDocumentStore implements DocumentStore, Serializable {
 		private static final long serialVersionUID = 1L;
-		private static final DocumentStore delegate = new LocalDocumentStore();
+		private static final DocumentStore delegate = new MemoryDocumentStore();
 		
 		public DelegateDocumentStore() {
 		}
@@ -236,6 +236,9 @@ class MemoryDocumentStoreTest {
 
 			CharacterRecord newRecord = serialized(record);
 			assertArrayEquals(record.document().toBytes(), newRecord.document().toBytes());
+
+			// Because memorydocumentstore encodes the ID in the bytes as a secret record, this
+			// the delegate should be able to report the id of a serialized document
 			assertEquals(delegateDocStore.getID(record),delegateDocStore.getID(newRecord));
 		}
 		

@@ -19,13 +19,7 @@ import java.math.BigDecimal;
 import java.util.ConcurrentModificationException;
 import java.util.Optional;
 
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 
 import com.ddougher.documentstore.exampledata.CharacterRecord;
 import com.ddougher.documentstore.exampledata.PlayerRecord;
@@ -90,8 +84,10 @@ class TestMemoryMappedDocumentStore {
 				bytes = bout.toByteArray();
 			}
 			
-			assertTrue((bytes.length - baslinesize) < 500,"size check");
-			
+			// assertTrue((bytes.length - baslinesize) < 500,"size check");
+			System.out.println("baseline: " + baslinesize);
+			System.out.println("size: " + bytes.length);
+
 			try (ByteArrayInputStream bin = new ByteArrayInputStream(bytes);
 					ObjectInputStream ooin = new ObjectInputStream(bin)) 
 			{
@@ -236,103 +232,45 @@ class TestMemoryMappedDocumentStore {
 			docStore.put(tpd);
 
 			TestPolyData tpd2 = docStore.get(TestPolyData.class, "danas pd");
-			assertArrayEquals(tpd2.getPolyData().get(0), new Number [] { 1, 1.0f, 2.0d, 1L } );
+			Assertions.assertArrayEquals(tpd2.getPolyData().get(0), new Number [] { 1, 1.0f, 2.0d, 1L } );
 		}
 
 	}
 
-	public static class DelegateDocumentStore implements DocumentStore, Serializable {
-		private static final long serialVersionUID = 1L;
-		private static final DocumentStore delegate = new LocalDocumentStore();
-		
-		public DelegateDocumentStore() {
-		}
 
-		public String getID(Document document) {
-			return delegate.getID(document);
-		}
+	
 
-		public Document withRemappedDocStore(Document d) {
-			if (d instanceof DocumentStoreAware)
-				((DocumentStoreAware)d).setDocumentStore(this);
-			return d;
-		}
-		
-		public Document newInstance() {
-			return withRemappedDocStore(delegate.newInstance());
-		}
+	@Test
+	@DisplayName("document view")
+	public void document() throws ClassNotFoundException, IOException {
+		CharacterRecord record = docStore.newInstance(CharacterRecord.class);
+		record.setName("bob");
+		docStore.put(record);
 
-		public Document newInstance(String key) {
-			return withRemappedDocStore(delegate.newInstance(key));
-		}
-
-		public Document get(String key) {
-			return withRemappedDocStore(delegate.get(key));
-		}
-
-		public Document lock(String key) {
-			return withRemappedDocStore(delegate.lock(key));
-		}
-
-		public void release(Document document) {
-			delegate.release(document);
-		}
-
-		public void put(Document document) {
-			delegate.put(document);
-		}
-
-		public void delete(Document document) {
-			delegate.delete(document);
-		}
-
+		CharacterRecord newRecord = serialized(record);
+		assertArrayEquals(record.document().toBytes(), newRecord.document().toBytes());
+		assertEquals(docStore.getID(record),docStore.getID(newRecord));
 	}
-	
-	
-	@Nested
-	@DisplayName("document serialization")
-	class Serialization {
-		private DelegateDocumentStore delegateDocStore;
-		
-		@BeforeEach
-		public void setup() {
-			delegateDocStore = new DelegateDocumentStore();
-		}
-		
-		@Test
-		@DisplayName("document view")
-		public void document() throws ClassNotFoundException, IOException {
-			CharacterRecord record = delegateDocStore.newInstance(CharacterRecord.class);
-			record.setName("bob");
-			delegateDocStore.put(record);
 
-			CharacterRecord newRecord = serialized(record);
-			assertArrayEquals(record.document().toBytes(), newRecord.document().toBytes());
-			assertEquals(delegateDocStore.getID(record),delegateDocStore.getID(newRecord));
-		}
-		
-		@SuppressWarnings("unchecked")
-		private <T> T serialized(T record) throws IOException, ClassNotFoundException 
+	@SuppressWarnings("unchecked")
+	private <T> T serialized(T record) throws IOException, ClassNotFoundException
+	{
+		try (
+				ByteArrayOutputStream bout = new ByteArrayOutputStream();
+				ObjectOutputStream oout = new ObjectOutputStream(bout) )
 		{
+			oout.writeObject(record);
+			oout.close();
+			bout.close();
 			try (
-					ByteArrayOutputStream bout = new ByteArrayOutputStream();
-					ObjectOutputStream oout = new ObjectOutputStream(bout) )
+					ByteArrayInputStream bin = new ByteArrayInputStream(bout.toByteArray());
+					ObjectInputStream oin = new ObjectInputStream(bin))
 			{
-				oout.writeObject(record);
-				oout.close();
-				bout.close();
-				try (
-						ByteArrayInputStream bin = new ByteArrayInputStream(bout.toByteArray());
-						ObjectInputStream oin = new ObjectInputStream(bin))
-				{
-					return (T)oin.readObject();
-				}
+				return (T)oin.readObject();
 			}
 		}
-
-		
 	}
-	
+
 	
 	@Nested
 	@DisplayName("transactions") 

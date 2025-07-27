@@ -153,6 +153,7 @@ public class GridClient implements Closeable {
 	 * @throws Exception
 	 */
 	public void execute(FindClassRequest req) throws Exception {
+		System.out.println("GridClient: FindClassRequest: " + req.className);
 
 		CompletableFuture<FindClassResponse> futureResponse, mine = null;
 		synchronized (classLoaderCache) {

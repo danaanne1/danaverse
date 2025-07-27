@@ -200,11 +200,11 @@ class LocalDocumentStoreTest {
 			CharacterRecord record = delegateDocStore.newInstance(CharacterRecord.class);
 			record.setName("bob");
 			delegateDocStore.put(record);
-			String id = delegateDocStore.getID(record);
+
 
 			CharacterRecord newRecord = serialized(record);
 			assertArrayEquals(record.document().toBytes(), newRecord.document().toBytes());
-			assertEquals(delegateDocStore.getID(record),delegateDocStore.getID(newRecord));
+			assertThrows(IllegalArgumentException.class, ()->delegateDocStore.getID(newRecord));
 		}
 		
 		@SuppressWarnings("unchecked")

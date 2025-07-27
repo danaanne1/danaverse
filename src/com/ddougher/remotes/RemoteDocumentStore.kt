@@ -3,6 +3,7 @@ package com.ddougher.remotes
 import com.ddougher.documentstore.Document
 import com.ddougher.documentstore.DocumentStore
 import com.ddougher.documentstore.MemoryMappedDocumentStore
+import com.ddougher.remoting.GridContext
 import java.io.*
 import java.util.*
 
@@ -22,9 +23,23 @@ class RemoteDocumentStore(
     /**
      * Public access to the singleton document store
      */
-    val documentStore: MemoryMappedDocumentStore
-        get() = DocumentStoreSingleton.getInstance(storePath)
-    
+    val documentStore: MemoryMappedDocumentStore = GridContext.context.getOrPut("DanaMarketData") {
+        val file = File(storePath, "Database.dt1")
+        if (file.exists()) {
+            ObjectInputStream(BufferedInputStream(FileInputStream(file), 65536)).use { ois ->
+                ois.readObject() as MemoryMappedDocumentStore
+            }
+        } else {
+            MemoryMappedDocumentStore(
+                Optional.of(storePath),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()
+            )
+        }
+    } as MemoryMappedDocumentStore
+
     override fun getID(document: Document): String {
         return documentStore.getID(document)
     }
@@ -63,34 +78,4 @@ class RemoteDocumentStore(
         return documentStore.keys().subSet(start?:keys.first, true, end?:keys.last, true)
     }
 
-    /**
-     * Singleton implementation for the document store
-     */
-    private object DocumentStoreSingleton {
-        @Volatile
-        private var instance: MemoryMappedDocumentStore? = null
-        
-        fun getInstance(path: String): MemoryMappedDocumentStore {
-            return instance ?: synchronized(this) {
-                instance ?: initializeDocumentStore(path).also { instance = it }
-            }
-        }
-        
-        private fun initializeDocumentStore(path: String): MemoryMappedDocumentStore {
-            val file = File(path, "Database.dt1")
-            return if (file.exists()) {
-                ObjectInputStream(BufferedInputStream(FileInputStream(file), 65536)).use { ois ->
-                    ois.readObject() as MemoryMappedDocumentStore
-                }
-            } else {
-                MemoryMappedDocumentStore(
-                    Optional.of(path),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty(),
-                    Optional.empty()
-                )
-            }
-        }
-    }
 }
