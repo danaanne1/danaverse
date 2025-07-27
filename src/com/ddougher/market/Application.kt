@@ -1,10 +1,12 @@
 package com.ddougher.market
 
+import com.ddougher.documentstore.AssetFactory
 import com.ddougher.market.application.CSVImporter
 import com.ddougher.market.application.StockDataBrowser
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.market.polygon.BackfilTickers
 import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.MemoryMappedAssetFactory
 import com.ddougher.documentstore.MemoryMappedDocumentStore
 import com.ddougher.remotes.RemoteDocumentStoreClient
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -20,10 +22,26 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+import java.io.ObjectStreamClass
 import java.net.InetSocketAddress
 import java.util.*
 import java.util.prefs.Preferences
 import javax.swing.*
+
+
+class RenamingObjectInputStream: ObjectInputStream {
+    constructor(inputStream: BufferedInputStream) : super(inputStream)
+
+    override fun resolveClass(desc: ObjectStreamClass?): Class<*>? {
+        if ((desc?.name?:"").contains("proxamic"))
+            return super.resolveClass(ObjectStreamClass.lookup(Class.forName(desc!!.name.replace("proxamic", "documentstore"))))
+        else if ((desc?.name?:"").contains("com.ddougher.util.MemoryMappedAssetFactory"))
+            return super.resolveClass(ObjectStreamClass.lookup(Class.forName(desc!!.name.replace("com.ddougher.util", "com.ddougher.documentstore"))))
+        else if ((desc?.name?:"").contains("com.ddougher.util.AssetFactory"))
+            return super.resolveClass(ObjectStreamClass.lookup(Class.forName(desc!!.name.replace("com.ddougher.util", "com.ddougher.documentstore"))))
+        return super.resolveClass(desc)
+    }
+}
 
 @OptIn(DelicateCoroutinesApi::class)
 class Application  {
@@ -47,7 +65,7 @@ class Application  {
                 @Suppress("ComplexRedundantLet")
                 File(path).apply { mkdirs() }.let { File(it, "Database.dt1") }.let { file ->
                     if (file.exists())
-                        ObjectInputStream(BufferedInputStream(file.inputStream(), 65536)).use { it.readObject() as MemoryMappedDocumentStore }
+                        RenamingObjectInputStream(BufferedInputStream(file.inputStream(), 65536)).use { it.readObject() as MemoryMappedDocumentStore }
                     else
                         MemoryMappedDocumentStore(Optional.of(path), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
                 }
