@@ -1,8 +1,5 @@
 package com.ddougher.buff.serialization;
 
-import com.ddougher.buff.serialization.Array;
-import com.ddougher.buff.serialization.Struct;
-
 import java.io.*;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
