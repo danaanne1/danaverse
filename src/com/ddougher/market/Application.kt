@@ -186,17 +186,17 @@ class Application  {
             
             // Add action to copy between document stores
             add(Utils.actionFu("Copy Document Store") {
-                if (remoteStore == null) {
-                    JOptionPane.showMessageDialog(
-                        mainFrame,
-                        "Remote document store is not available.\nPlease connect to a remote store first.",
-                        "Copy Failed",
-                        JOptionPane.WARNING_MESSAGE
-                    )
-                } else {
+//                if (remoteStore == null) {
+//                    JOptionPane.showMessageDialog(
+//                        mainFrame,
+//                        "Remote document store is not available.\nPlease connect to a remote store first.",
+//                        "Copy Failed",
+//                        JOptionPane.WARNING_MESSAGE
+//                    )
+//                } else {
                     // Create and show the document store copy helper
                     com.ddougher.market.application.DocumentStoreCopyHelper(this@Application).showCopyDialog()
-                }
+//                }
             })
             
             addSeparator()

@@ -1,13 +1,22 @@
 package com.ddougher.market.application
 
+import com.ddougher.documentstore.Document
 import com.ddougher.market.Application
 import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.MemoryMappedDocumentStore
 import com.ddougher.documentstore.MemoryMappedDocumentStore.MemoryMappedDocument
+import com.ddougher.market.Constants
+import com.ddougher.remoting.GridClient
+import com.ddougher.remoting.GridContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -17,6 +26,15 @@ import java.awt.GridBagLayout
 import java.awt.Insets
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
+import java.net.InetSocketAddress
+import java.util.Optional
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.BorderFactory
@@ -133,31 +151,31 @@ class DocumentStoreCopyHelper(private val app: Application) {
             // Configure button actions
             copyLocalToRemoteButton.addActionListener {
                 if (!isCopying) {
-                    if (app.remoteStore == null) {
-                        JOptionPane.showMessageDialog(
-                            this,
-                            "Remote document store is not available.\nPlease connect to a remote store first.",
-                            "Copy Failed",
-                            JOptionPane.WARNING_MESSAGE
-                        )
-                        return@addActionListener
-                    }
-                    
-                    startCopy(app.docStore, app.remoteStore!!)
+//                    if (app.remoteStore == null) {
+//                        JOptionPane.showMessageDialog(
+//                            this,
+//                            "Remote document store is not available.\nPlease connect to a remote store first.",
+//                            "Copy Failed",
+//                            JOptionPane.WARNING_MESSAGE
+//                        )
+//                        return@addActionListener
+//                    }
+
+                    startCopy(app.docStore, app.remoteStore)
                 }
             }
             
             copyRemoteToLocalButton.addActionListener {
                 if (!isCopying) {
-                    if (app.remoteStore == null) {
-                        JOptionPane.showMessageDialog(
-                            this,
-                            "Remote document store is not available.\nPlease connect to a remote store first.",
-                            "Copy Failed",
-                            JOptionPane.WARNING_MESSAGE
-                        )
-                        return@addActionListener
-                    }
+//                    if (app.remoteStore == null) {
+//                        JOptionPane.showMessageDialog(
+//                            this,
+//                            "Remote document store is not available.\nPlease connect to a remote store first.",
+//                            "Copy Failed",
+//                            JOptionPane.WARNING_MESSAGE
+//                        )
+//                        return@addActionListener
+//                    }
                     
                     startCopy(app.remoteStore!!, app.docStore)
                 }
@@ -200,7 +218,7 @@ class DocumentStoreCopyHelper(private val app: Application) {
         /**
          * Starts the copy process from source to destination
          */
-        private fun startCopy(source: DocumentStore, destination: DocumentStore) {
+        private fun startCopy(source: DocumentStore, destination: DocumentStore?) {
             isCopying = true
             copyLocalToRemoteButton.isEnabled = false
             copyRemoteToLocalButton.isEnabled = false
@@ -273,24 +291,115 @@ class DocumentStoreCopyHelper(private val app: Application) {
          * Copies documents from source to destination
          * This is a placeholder implementation - the actual copy logic will be implemented by the user
          */
-        @OptIn(ExperimentalCoroutinesApi::class)
-        private suspend fun copyDocuments(source: DocumentStore, destination: DocumentStore, listener: CopyProgressListener) {
+        private suspend fun copyDocuments(source: DocumentStore, destination: DocumentStore?, listener: CopyProgressListener) {
+            if (destination == null) {
+                copyDocumentsToRemote(source,  listener)
+            } else {
+                throw Exception("Destination store is not a MemoryMappedDocumentStore")
+            }
+        }
+
+
+        @Suppress("ControlFlowWithEmptyBody")
+        private suspend fun copyDocumentsToRemote(source: DocumentStore, listener: CopyProgressListener) {
             // Start the copy process
             val totalDocs = source.traverseKeys(null, null).count().toInt()
             listener.onCopyStart(totalDocs)
             val listenerMutex = Mutex()
             val disp = Executors.newCachedThreadPool()
 
-            val count: AtomicInteger = AtomicInteger(0)
-            withContext(disp.asCoroutineDispatcher().limitedParallelism(10)) {
-                source.traverseDocuments(null, null).forEach {
-                    it.`as`(MemoryMappedDocument::class.java).withVERSION(0L)
-                    destination.put(it)
-                    listener.onDocumentCopied(source.getID(it), count.getAndAdd(1), totalDocs)
+            val count = AtomicInteger(0)
+            withContext(disp.asCoroutineDispatcher()) {
+                try {
+
+                    val docChannel = Channel<Document>(1000)
+                    repeat(4) {
+                        launch {
+                            val remoteServerHost = app.preferences.node(Constants.REMOTE_STORE_NODE)
+                                .get(Constants.REMOTE_STORE_HOST_KEY, "localhost")
+                            val remoteServerPort = app.preferences.node(Constants.REMOTE_STORE_NODE)
+                                .getInt(Constants.REMOTE_STORE_PORT_KEY, 3262)
+                            val remoteStoreDirectory = app.preferences.node(Constants.DOC_STORE_NODE).get(
+                                Constants.REMOTE_STORE_DIRECTORY_KEY,
+                                Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote"
+                            )
+                            // Create the remote document store client
+                            val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
+                            GridClient(serverAddress).apply { start() }.use { client ->
+                                val copyHelper = client.createRemoteObject(
+                                    RemoteCopyHelper::class.java,
+                                    RemoteCopyHelperImpl::class.java,
+                                    arrayOf<Class<*>>(String::class.java),
+                                    arrayOf<Any>(remoteStoreDirectory)
+                                )
+
+                                val recs = mutableListOf<Document>()
+                                while (null != docChannel.receiveCatching().getOrNull()?.also {
+                                        recs.add(it)
+                                        if (recs.size >= 50) {
+                                            copyHelper.ingestDocuments(java.util.ArrayList(recs))
+                                            listenerMutex.withLock {
+                                                listener.onDocumentCopied("x", count.addAndGet(recs.size), totalDocs)
+                                            }
+                                            recs.clear()
+                                        }
+                                    });
+                                if (recs.isNotEmpty()) {
+                                    copyHelper.ingestDocuments(java.util.ArrayList(recs))
+                                    listenerMutex.withLock {
+                                        listener.onDocumentCopied("x", count.addAndGet(recs.size), totalDocs)
+                                    }
+                                }
+
+                            }
+                        }
+                    }
+                    source.traverseDocuments(null, null).parallel().forEach { runBlocking { docChannel.send(it) } }
+                    docChannel.close()
+                } catch ( ex: Exception ) {
+                    ex.printStackTrace(System.err)
                 }
             }
             listener.onCopyComplete(count.get())
             disp.shutdown()
+            println("All Done!")
+        }
+    }
+}
+
+interface RemoteCopyHelper {
+    fun ingestDocuments(docs: java.util.ArrayList<Document>)
+}
+
+class RemoteCopyHelperImpl(val storePath:String): RemoteCopyHelper {
+    val documentStore = GridContext.context.getOrPut("DanaMarketData") {
+        val file = File(storePath, "Database.dt1")
+        (if (file.exists()) {
+            ObjectInputStream(BufferedInputStream(FileInputStream(file), 65536)).use { ois ->
+                ois.readObject() as MemoryMappedDocumentStore
+            }
+        } else {
+            MemoryMappedDocumentStore(
+                Optional.of(storePath),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty()
+            )
+        }).also {
+            Runtime.getRuntime().addShutdownHook(Thread {
+                it.close()
+                ObjectOutputStream(BufferedOutputStream(FileOutputStream(file), 65536)).use { ois ->
+                    ois.writeObject(it)
+                    ois.flush()
+                }
+            })
+        }
+    } as DocumentStore
+
+    override fun ingestDocuments(docs: java.util.ArrayList<Document>) {
+        docs.parallelStream().map {it.`as`(MemoryMappedDocument::class.java)}.forEach { doc ->
+            documentStore.put(doc.withVERSION(documentStore.get(MemoryMappedDocument::class.java, doc.ID()).VERSION()))
         }
     }
 }
