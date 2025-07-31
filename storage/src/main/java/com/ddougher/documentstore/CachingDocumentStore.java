@@ -25,7 +25,7 @@ final class CachingDocumentStore implements DocumentStore, Consumer<Consumer<Doc
 	@Override
 	public Document get(String key) {
 		if (!documentsById.containsKey(key))
-			documentsById.put(key, AbstractDocumentStore.withDocStore(delegate.lock(key), this));
+			documentsById.put(key, AbstractDocumentStore.withDocStore(delegate.get(key), this));
 		return documentsById.get(key);
 	}
 

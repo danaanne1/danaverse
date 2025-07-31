@@ -42,6 +42,7 @@ public class GridServer {
 
 	public MemoryMappedDocumentStore initDocStore() throws IOException, ClassNotFoundException {
 		final File file = new File("DanaStockData", "Database.dt1");
+		file.getParentFile().mkdirs();
 		MemoryMappedDocumentStore docStore;
 		if (file.exists()) {
 			try (	FileInputStream fin = new FileInputStream(file);

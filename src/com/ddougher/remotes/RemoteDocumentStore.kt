@@ -23,22 +23,7 @@ class RemoteDocumentStore(
     /**
      * Public access to the singleton document store
      */
-    val documentStore: MemoryMappedDocumentStore = GridContext.context.getOrPut("DanaMarketData") {
-        val file = File(storePath, "Database.dt1")
-        if (file.exists()) {
-            ObjectInputStream(BufferedInputStream(FileInputStream(file), 65536)).use { ois ->
-                ois.readObject() as MemoryMappedDocumentStore
-            }
-        } else {
-            MemoryMappedDocumentStore(
-                Optional.of(storePath),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty()
-            )
-        }
-    } as MemoryMappedDocumentStore
+    val documentStore = GridContext.context["DanaMarketData"]!! as MemoryMappedDocumentStore
 
     override fun getID(document: Document): String {
         return documentStore.getID(document)
@@ -75,7 +60,7 @@ class RemoteDocumentStore(
     override fun keys(start:String?, end:String?): Set<String> {
         val keys = documentStore.keys()
         if (keys.isEmpty()) return keys
-        return documentStore.keys().subSet(start?:keys.first, true, end?:keys.last, true)
+        return keys.subSet(start?:keys.first, true, end?:keys.last, true)
     }
 
 }

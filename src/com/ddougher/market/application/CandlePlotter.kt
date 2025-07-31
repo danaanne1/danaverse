@@ -188,7 +188,6 @@ class CandlePlotter {
 
     private fun collectCandleData(equity: Equity, endTime: Long): List<CandleInfo> {
         val candles = mutableListOf<CandleInfo>()
-        val ohlcMetric = equity.metrics["ohlc_min"] ?: return candles
 
         // Time intervals in milliseconds
         val dayMs = 24 * 60 * 60 * 1000L
@@ -239,9 +238,16 @@ class CandlePlotter {
         // Verify continuity (currentTime should equal endTime)
         // assert(currentTime == endTime) { "Time ranges are not continuous: expected $endTime, got $currentTime" }
 
-        for ((rangeStart, rangeEnd) in timeRanges) {
-            val candleInfo = aggregateDataForTimeRange(ohlcMetric, rangeStart, rangeEnd)
-            candleInfo?.let { candles.add(it) }
+        equity.documentStore.execute { documentStore ->
+            val equity = documentStore.get(Equity::class.java, documentStore.getID(equity))
+            val ohlcMetric = equity.metrics["ohlc_min"]
+
+            if (ohlcMetric != null) {
+                for ((rangeStart, rangeEnd) in timeRanges) {
+                    val candleInfo = aggregateDataForTimeRange(ohlcMetric, rangeStart, rangeEnd)
+                    candleInfo?.let { candles.add(it) }
+                }
+            }
         }
 
         return candles
@@ -252,6 +258,7 @@ class CandlePlotter {
         startTime: Long,
         endTime: Long
     ): CandleInfo? {
+
         val calendar = Calendar.getInstance()
         val relevantData = mutableListOf<Array<Number>>()
 

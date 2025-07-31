@@ -29,6 +29,7 @@ sourceSets {
 }
 
 dependencies {
+    implementation(project(":storage"))
     // Testing
     testImplementation(project(":"))  // Main project dependency for tests
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")

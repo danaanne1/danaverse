@@ -293,10 +293,10 @@ class DocumentStoreCopyHelper(private val app: Application) {
          * This is a placeholder implementation - the actual copy logic will be implemented by the user
          */
         private suspend fun copyDocuments(source: DocumentStore, destination: DocumentStore?, listener: CopyProgressListener) {
-            if (destination == null) {
+            if (source is MemoryMappedDocumentStore) {
                 copyDocumentsToRemote(source,  listener)
             } else {
-                throw Exception("Destination store is not a MemoryMappedDocumentStore")
+                throw Exception("Source store is not a MemoryMappedDocumentStore")
             }
         }
 
@@ -376,7 +376,7 @@ interface RemoteCopyHelper {
 
 class RemoteCopyHelperImpl(val storePath:String): RemoteCopyHelper {
     var mine = false
-    val documentStore = GridContext.context["DanaMarketData"] as DocumentStore
+    val documentStore = GridContext.context["DanaMarketData"]!! as DocumentStore
 
     override fun ingestDocuments(docs: java.util.ArrayList<Document>) {
         docs.parallelStream().map {it.`as`(MemoryMappedDocument::class.java)}.forEach { doc ->
