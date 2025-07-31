@@ -140,5 +140,23 @@ public class GridProtocol {
 		}
 
 	}
+
+	static class CloseRequest implements Serializable {
+		private static final long serialVersionUID = 1L;
+		public CloseRequest() {}
+		@Override
+		public String toString() {
+			return "CloseRequest";
+		}
+	}
+
+	static class CloseResponse implements Serializable {
+		private static final long serialVersionUID = 1L;
+		public CloseResponse() {}
+		@Override
+		public String toString() {
+			return "CloseResponse";
+		}
+	}
 	
 }

@@ -4,9 +4,12 @@ import java.io.*;
 import java.lang.reflect.Proxy;
 import java.net.*;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 
+import com.ddougher.documentstore.MemoryMappedDocumentStore;
 import com.ddougher.remoting.GridProtocol.CreateObjectRequest;
 import com.ddougher.remoting.GridProtocol.CreateObjectResponse;
 import com.ddougher.remoting.GridProtocol.FindClassResponse;
@@ -22,12 +25,13 @@ public class GridServer {
 	private transient ServerSocket serverSocket;
 	private boolean debug = false;
 	
-	public GridServer(SocketAddress address) throws IOException {
+	public GridServer(SocketAddress address) throws IOException, ClassNotFoundException {
+		GridContext.context.put("DanaMarketData", initDocStore());
 		this.serverSocket = new ServerSocket();
 		serverSocket.bind(address);
 	}
 
-	public static void main(String [] args) throws IOException {
+	public static void main(String [] args) throws IOException, ClassNotFoundException {
 		System.out.println("Starting Grid Server on port " + Integer.parseInt(args[0]) );
 		System.out.println("Available Processors " + Runtime.getRuntime().availableProcessors());
 		System.out.println("Max Memory " + Runtime.getRuntime().maxMemory());
@@ -35,6 +39,45 @@ public class GridServer {
 		GridServer server = new GridServer(serverAddress);
 		server.start();
 	}
+
+	public MemoryMappedDocumentStore initDocStore() throws IOException, ClassNotFoundException {
+		final File file = new File("DanaStockData", "Database.dt1");
+		MemoryMappedDocumentStore docStore;
+		if (file.exists()) {
+			try (	FileInputStream fin = new FileInputStream(file);
+					BufferedInputStream bin = new BufferedInputStream(fin, 65536);
+					ObjectInputStream ois = new ObjectInputStream(bin))
+			{
+				docStore = (MemoryMappedDocumentStore)ois.readObject();
+				System.out.println("Database loaded from file " + file.getAbsolutePath());
+			}
+		} else {
+			docStore = new MemoryMappedDocumentStore(
+					Optional.of("DanaStockData"),
+					Optional.empty(),
+					Optional.empty(),
+					Optional.empty(),
+					Optional.empty()
+			);
+			System.out.println("Database created");
+		}
+		final MemoryMappedDocumentStore it = docStore;
+		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+			try (FileOutputStream fout = new FileOutputStream(file);
+				 BufferedOutputStream bout = new BufferedOutputStream(fout, 65536);
+				 ObjectOutputStream oos = new ObjectOutputStream(bout)) {
+				it.close();
+				System.out.println("Database closed");
+				oos.writeObject(it);
+				System.out.println("Database written to file " + file.getAbsolutePath());
+				oos.flush();
+			} catch (IOException ex) {
+				ex.printStackTrace(System.out);
+			}
+		}));
+		return it;
+	}
+
 
 	public void start() {
 		Thread t = new Thread(()->acceptNewIncoming());
@@ -102,6 +145,14 @@ public class GridServer {
 			try 
 			{
 				Object ob = oin.readObject();
+				if (ob instanceof GridProtocol.CloseRequest) {
+					done = true;
+					synchronized(oout) {
+						oout.writeObject(new GridProtocol.CloseResponse());
+						oout.flush();
+					}
+					return;
+				}
 				SharedResources.cachedThreadPool.execute(
 					SharedResources.withStackDumpOnException(()-> {
 						// find and execute the function matching the type of the input object

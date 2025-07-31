@@ -35,6 +35,7 @@ import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.net.InetSocketAddress
 import java.util.Optional
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import javax.swing.BorderFactory
@@ -309,10 +310,11 @@ class DocumentStoreCopyHelper(private val app: Application) {
             val disp = Executors.newCachedThreadPool()
 
             val count = AtomicInteger(0)
+
             withContext(disp.asCoroutineDispatcher()) {
                 try {
-
                     val docChannel = Channel<Document>(1000)
+                    val shutdownLatch = CountDownLatch(4)
                     repeat(4) {
                         launch {
                             val remoteServerHost = app.preferences.node(Constants.REMOTE_STORE_NODE)
@@ -350,7 +352,8 @@ class DocumentStoreCopyHelper(private val app: Application) {
                                         listener.onDocumentCopied("x", count.addAndGet(recs.size), totalDocs)
                                     }
                                 }
-
+                                shutdownLatch.countDown()
+                                shutdownLatch.await()
                             }
                         }
                     }
@@ -372,34 +375,13 @@ interface RemoteCopyHelper {
 }
 
 class RemoteCopyHelperImpl(val storePath:String): RemoteCopyHelper {
-    val documentStore = GridContext.context.getOrPut("DanaMarketData") {
-        val file = File(storePath, "Database.dt1")
-        (if (file.exists()) {
-            ObjectInputStream(BufferedInputStream(FileInputStream(file), 65536)).use { ois ->
-                ois.readObject() as MemoryMappedDocumentStore
-            }
-        } else {
-            MemoryMappedDocumentStore(
-                Optional.of(storePath),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty()
-            )
-        }).also {
-            Runtime.getRuntime().addShutdownHook(Thread {
-                it.close()
-                ObjectOutputStream(BufferedOutputStream(FileOutputStream(file), 65536)).use { ois ->
-                    ois.writeObject(it)
-                    ois.flush()
-                }
-            })
-        }
-    } as DocumentStore
+    var mine = false
+    val documentStore = GridContext.context["DanaMarketData"] as DocumentStore
 
     override fun ingestDocuments(docs: java.util.ArrayList<Document>) {
         docs.parallelStream().map {it.`as`(MemoryMappedDocument::class.java)}.forEach { doc ->
-            documentStore.put(doc.withVERSION(documentStore.get(MemoryMappedDocument::class.java, doc.ID()).VERSION()))
+            documentStore!!.put(doc.withVERSION(documentStore.get(MemoryMappedDocument::class.java, doc.ID()).VERSION()))
         }
     }
+
 }

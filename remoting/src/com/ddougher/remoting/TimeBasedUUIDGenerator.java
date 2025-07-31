@@ -103,7 +103,7 @@ public class TimeBasedUUIDGenerator
 	 */
 	private long nextTimestamp()
 	{
-		long timestamp =((System.currentTimeMillis()+EPOCH_OFFSET_MILLIS)*10000) & 0x0FFFffffFFFFffffl;
+		long timestamp =((System.currentTimeMillis()+EPOCH_OFFSET_MILLIS)*10000) & 0x0FFFffffFFFFffffL;
 		synchronized (TimeBasedUUIDGenerator.class) 
 		{
 			if ((timestamp!=lastTimestamp)||(++nanosPart>=10000))
@@ -117,7 +117,7 @@ public class TimeBasedUUIDGenerator
 					catch (InterruptedException e)
 					{
 					}
-					timestamp = ((System.currentTimeMillis()+EPOCH_OFFSET_MILLIS)*10000) & 0x0FFFffffFFFFffffl;
+					timestamp = ((System.currentTimeMillis()+EPOCH_OFFSET_MILLIS)*10000) & 0x0FFFffffFFFFffffL;
 				}
 				lastTimestamp = timestamp;
 				nanosPart = 0;

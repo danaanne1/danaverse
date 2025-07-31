@@ -34,6 +34,8 @@ import com.ddougher.remoting.GridProtocol.FindClassRequest;
 import com.ddougher.remoting.GridProtocol.FindClassResponse;
 import com.ddougher.remoting.GridProtocol.RemoteInvocationRequest;
 import com.ddougher.remoting.GridProtocol.RemoteInvocationResponse;
+import com.ddougher.remoting.GridProtocol.CloseResponse;
+import com.ddougher.remoting.GridProtocol.CloseRequest;
 
 
 /** A client for a grid server */
@@ -43,7 +45,7 @@ public class GridClient implements Closeable {
 	SocketAddress address;
 	transient ObjectInputStream oin;
 	transient ObjectOutputStream oout;
-	transient boolean closed = false;
+	transient volatile boolean closed = false;
 	transient Thread thread;
 	transient boolean debug = false;
 	
@@ -90,6 +92,10 @@ public class GridClient implements Closeable {
 	void handleIncoming() throws IOException  {
 		try {
 			Object ob = oin.readObject();
+			if (ob instanceof CloseResponse) {
+				closed = true;
+				return;
+			}
 			SharedResources.cachedThreadPool.execute(
 				SharedResources.withStackDumpOnException(() -> {
 					if (debug) System.out.println(this.toString() + ":" +ob);
@@ -134,9 +140,16 @@ public class GridClient implements Closeable {
 
 	@Override
 	public void close() throws IOException {
-		closed = true;
-		thread.interrupt();
-	}
+		synchronized (oout) {
+			oout.writeObject(new CloseRequest());
+			oout.flush();
+		}
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
 	/**
 	 * a cache of FindClassResponse Futures.

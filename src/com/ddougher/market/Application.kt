@@ -72,13 +72,14 @@ class Application  {
             }
             
     // Remote document store (initialized if enabled in preferences)
-    val remoteStore: DocumentStore? = if (preferences.node(Constants.REMOTE_STORE_NODE).getBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)) {
+    val remoteStore: DocumentStore? =
+    if (preferences.node(Constants.REMOTE_STORE_NODE).getBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)) {
         // Get remote store configuration from preferences
         val remoteServerHost = preferences.node(Constants.REMOTE_STORE_NODE).get(Constants.REMOTE_STORE_HOST_KEY, "localhost")
         val remoteServerPort = preferences.node(Constants.REMOTE_STORE_NODE).getInt(Constants.REMOTE_STORE_PORT_KEY, 3262)
-        val remoteStoreDirectory = preferences.node(Constants.DOC_STORE_NODE).get(Constants.REMOTE_STORE_DIRECTORY_KEY, 
+        val remoteStoreDirectory = preferences.node(Constants.DOC_STORE_NODE).get(Constants.REMOTE_STORE_DIRECTORY_KEY,
             Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote")
-        
+
         // Create the remote document store client
         val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
         RemoteDocumentStoreClient(serverAddress, remoteStoreDirectory)
