@@ -8,6 +8,8 @@ import com.ddougher.market.polygon.BackfilTickers
 import com.ddougher.documentstore.DocumentStore
 import com.ddougher.documentstore.MemoryMappedAssetFactory
 import com.ddougher.documentstore.MemoryMappedDocumentStore
+import com.ddougher.market.application.StockCrawler
+import com.ddougher.market.application.Swing
 import com.ddougher.remotes.RemoteDocumentStoreClient
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -24,6 +26,7 @@ import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.ObjectStreamClass
 import java.net.InetSocketAddress
+import java.text.SimpleDateFormat
 import java.util.*
 import java.util.prefs.Preferences
 import javax.swing.*
@@ -74,15 +77,16 @@ class Application  {
     // Remote document store (initialized if enabled in preferences)
     val remoteStore: DocumentStore? =
     if (preferences.node(Constants.REMOTE_STORE_NODE).getBoolean(Constants.REMOTE_STORE_ENABLED_KEY, false)) {
-        // Get remote store configuration from preferences
-        val remoteServerHost = preferences.node(Constants.REMOTE_STORE_NODE).get(Constants.REMOTE_STORE_HOST_KEY, "localhost")
-        val remoteServerPort = preferences.node(Constants.REMOTE_STORE_NODE).getInt(Constants.REMOTE_STORE_PORT_KEY, 3262)
-        val remoteStoreDirectory = preferences.node(Constants.DOC_STORE_NODE).get(Constants.REMOTE_STORE_DIRECTORY_KEY,
-            Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote")
-
-        // Create the remote document store client
-        val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
-        RemoteDocumentStoreClient(serverAddress, remoteStoreDirectory)
+//        // Get remote store configuration from preferences
+//        val remoteServerHost = preferences.node(Constants.REMOTE_STORE_NODE).get(Constants.REMOTE_STORE_HOST_KEY, "localhost")
+//        val remoteServerPort = preferences.node(Constants.REMOTE_STORE_NODE).getInt(Constants.REMOTE_STORE_PORT_KEY, 3262)
+//        val remoteStoreDirectory = preferences.node(Constants.DOC_STORE_NODE).get(Constants.REMOTE_STORE_DIRECTORY_KEY,
+//            Constants.DOC_STORE_DEFAULT_FOLDER_NAME + File.separator + "remote")
+//
+//        // Create the remote document store client
+//        val serverAddress = InetSocketAddress(remoteServerHost, remoteServerPort)
+//        RemoteDocumentStoreClient(serverAddress, remoteStoreDirectory)
+        null
     } else {
         null
     }
@@ -184,7 +188,30 @@ class Application  {
                     )
                 }
             })
-            
+
+            add(Utils.actionFu("Scan for 4% Swings") {
+                GlobalScope.launch {
+                    val startDate = SimpleDateFormat("yyyy-MM-dd").parse("2025-01-01")
+                    val crawler = StockCrawler(docStore)
+                    val stocks = docStore.get(Stocks::class.java, "stocks")
+                    println("Starting scan for 4% swings...")
+                    crawler.visitEveryDaysMetricByTicker(stocks.tickers().keys.toSortedSet().toList(), startDate, handler = crawler::locateFourPercentSwings)
+                        .sortedWith { o1, o2 ->
+                            o1.ticker.compareTo(o2.ticker).let {
+                                if (it == 0)
+                                    o1.startTimeMs.compareTo(o2.startTimeMs)
+                                else
+                                    it
+                            }
+                        }
+                        .forEach {
+                            println(it.toString())
+                        }
+                    println("Done")
+                }
+            })
+
+
             // Add action to copy between document stores
             add(Utils.actionFu("Copy Document Store") {
 //                if (remoteStore == null) {
