@@ -12,6 +12,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.Serializable
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.*
 import kotlin.collections.listOf
 
@@ -32,8 +35,18 @@ class StockCrawler(val documentStore: DocumentStore) {
 
     /** find all the stocks that went up by more than 4% in a day */
     suspend fun locateFourPercentSwings(equity: Equity, metricData: List<Array<Number>>): List<Swing> {
-        val lowCandle = metricData.minBy { it[Candle.LOW.value].toDouble() }
-        val highCandle = metricData.maxBy { it[Candle.HIGH.value].toDouble() }
+        val localLow = LocalTime.of(6,29)
+        val localHi = LocalTime.of(13,1)
+
+        val filtered = metricData.filter {
+            Instant.ofEpochMilli(it[0] as Long).atZone(ZoneId.systemDefault()).toLocalTime().let {
+                it.isAfter(localLow) && it.isBefore(localHi)
+            }
+        }
+        if (filtered.isEmpty()) return listOf()
+
+        val lowCandle = filtered.minBy { it[Candle.LOW.value].toDouble() }
+        val highCandle = filtered.maxBy { it[Candle.HIGH.value].toDouble() }
 
         val lowTime = lowCandle[Candle.TIME.value].toLong()
         val highTime = highCandle[Candle.TIME.value].toLong()
@@ -43,7 +56,7 @@ class StockCrawler(val documentStore: DocumentStore) {
         val low = lowCandle[Candle.LOW.value].toDouble()
         if ((high-low)/low < .04) return listOf()
 
-        val vol = metricData.filter { it[Candle.TIME.value].toLong() >= lowTime && it[Candle.TIME.value].toLong() <= highTime }.sumOf { it[Candle.VOLUME.value].toLong() }
+        val vol = filtered.filter { it[Candle.TIME.value].toLong() >= lowTime && it[Candle.TIME.value].toLong() <= highTime }.sumOf { it[Candle.VOLUME.value].toLong() }
 
         return listOf(
             Swing(
