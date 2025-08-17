@@ -7,6 +7,10 @@ import java.awt.Color
 import java.awt.Graphics2D
 import java.awt.geom.Rectangle2D
 import java.util.*
+import kotlin.math.absoluteValue
+import kotlin.time.Duration
+import kotlin.time.DurationUnit
+import kotlin.time.toDuration
 
 class CandlePlotter {
 
@@ -30,13 +34,16 @@ class CandlePlotter {
      * the graphics is in 16 bit greyscale
      */
     fun plotCandles(equity: Equity, endTime: Long, graphics2D: Graphics2D, color: Color = Color.BLACK) {
-        val candleData = collectCandleData(equity, endTime)
+        plotCandles(collectCandleData(equity, endTime), graphics2D, color)
+    }
+
+    fun plotCandles(candleData: List<CandleInfo>, graphics2D: Graphics2D, color: Color = Color.BLACK) {
         if (candleData.isEmpty()) return
 
         // Since graphics is pre-transformed to 100x100 coordinate system
         val canvasWidth = 100.0
         val canvasHeight = 100.0
-        val candleWidth = canvasWidth / 20.0
+        val candleWidth = canvasWidth / candleData.size
         val wickWidth = candleWidth / 2
 
         // Find price range for scaling - filter out NaN values which represent placeholders
@@ -94,7 +101,7 @@ class CandlePlotter {
     }
 
     /**
-     * Given an equity and an end time, this method plots 15 candlesticks with the wicks adjacent to the body
+     * Given an equity and an end time, this method plots 20 candlesticks with the wicks adjacent to the body
      *
      * from left to right, the candles cover a continuous range of time prior to the end time as follows
      * - the first 5 candles represent 24 hour aggregates
@@ -114,8 +121,7 @@ class CandlePlotter {
      *
      * Unlike the original plotCandles method, the wicks are positioned adjacent to the body rather than centered
      */
-    fun plotCandlesWithAdjacentWicks(equity: Equity, endTime: Long, graphics2D: Graphics2D) {
-        val candleData = collectCandleData(equity, endTime)
+    fun plotCandlesWithAdjacentWicks(candleData: List<CandleInfo>, graphics2D: Graphics2D) {
         if (candleData.isEmpty()) return
 
         // Since graphics is pre-transformed to 100x100 coordinate system
@@ -177,7 +183,7 @@ class CandlePlotter {
         }
     }
 
-    private data class CandleInfo(
+    data class CandleInfo(
         val time: Long,
         val open: Double,
         val high: Double,
@@ -185,58 +191,77 @@ class CandlePlotter {
         val close: Double,
         val volume: Long
     )
+    
+    /**
+     * Represents a time range configuration for candle data collection.
+     * 
+     * @param count Number of candles to collect for this range
+     * @param amount The amount of time each candle represents
+     * @param unit The time unit for the amount parameter
+     * @param initialOffset Initial offset from the previous range
+     * @param initialOffsetUnit The time unit for the initialOffset parameter
+     */
+    data class CandleRange(
+        val count: Int,
+        val amount: Long,
+        val unit: DurationUnit,
+        val initialOffset: Long,
+        val initialOffsetUnit: DurationUnit
+    ) {
+        /**
+         * Converts the amount and unit to milliseconds
+         */
+        fun getDurationMs(): Long {
+            return amount.toDuration(unit).inWholeMilliseconds
+        }
+        
+        /**
+         * Converts the initial offset and unit to milliseconds
+         */
+        fun getInitialOffsetMs(): Long {
+            return initialOffset.toDuration(initialOffsetUnit).inWholeMilliseconds
+        }
+    }
 
-    private fun collectCandleData(equity: Equity, endTime: Long): List<CandleInfo> {
+
+    /**
+     * Collects candle data for the specified equity up to the given end time.
+     * 
+     * @param equity The equity to collect data for
+     * @param endTime The end time for data collection (in milliseconds)
+     * @param ranges The time ranges to collect data for, specified as a list of CandleRange objects.
+     *               Default value matches the original behavior:
+     *               - 5 day candles with 330 minutes initial offset
+     *               - 5 hour candles with 30 minutes initial offset
+     *               - 5 five-minute candles with 5 minutes initial offset
+     *               - 5 one-minute candles with 0 minutes initial offset
+     * @return A list of CandleInfo objects representing the collected candle data
+     */
+    fun collectCandleData(
+        equity: Equity, 
+        endTime: Long,
+        ranges: List<CandleRange> = listOf(
+            CandleRange(5, 1, DurationUnit.MINUTES, 0, DurationUnit.MINUTES),
+            CandleRange(5, 5, DurationUnit.MINUTES, 0, DurationUnit.MINUTES),
+            CandleRange(5, 1, DurationUnit.HOURS, 0, DurationUnit.MINUTES),
+            CandleRange(5, 1, DurationUnit.DAYS, 0, DurationUnit.MINUTES)
+        )
+    ): List<CandleInfo> {
         val candles = mutableListOf<CandleInfo>()
 
-        // Time intervals in milliseconds
-        val dayMs = 24 * 60 * 60 * 1000L
-        val hourMs = 60 * 60 * 1000L
-        val minuteMs = 60 * 1000L
-        val fiveMinuteMs = 5 * minuteMs
-
-        // Calculate total time span for all candles
-        val totalTimeSpan = (5 * dayMs) + (5 * hourMs) + (5 * fiveMinuteMs) + (5 * minuteMs)
-        val startTime = endTime - totalTimeSpan
-
         // Create continuous, non-overlapping time ranges
-        var currentTime = startTime
         val timeRanges = mutableListOf<Pair<Long, Long>>()
 
-        // 5 day candles (oldest data) - each candle spans 24 hours
-        repeat(5) {
-            val rangeStart = currentTime
-            val rangeEnd = currentTime + dayMs
-            timeRanges.add(Pair(rangeStart, rangeEnd))
-            currentTime = rangeEnd
+        // Process each range configuration
+        for (range in ranges) {
+            var currentTime = endTime - range.getInitialOffsetMs()
+            repeat(range.count) {
+                val rangeStart = currentTime - range.getDurationMs()
+                val rangeEnd = currentTime
+                timeRanges.add(Pair(rangeStart, rangeEnd))
+                currentTime = rangeStart
+            }
         }
-
-        // 5 hour candles - each candle spans 1 hour  
-        repeat(5) {
-            val rangeStart = currentTime
-            val rangeEnd = currentTime + hourMs
-            timeRanges.add(Pair(rangeStart, rangeEnd))
-            currentTime = rangeEnd
-        }
-
-        // 5 five-minute candles - each candle spans 5 minutes
-        repeat(5) {
-            val rangeStart = currentTime
-            val rangeEnd = currentTime + fiveMinuteMs
-            timeRanges.add(Pair(rangeStart, rangeEnd))
-            currentTime = rangeEnd
-        }
-
-        // 5 one-minute candles (newest data) - each candle spans 1 minute
-        repeat(5) {
-            val rangeStart = currentTime
-            val rangeEnd = currentTime + minuteMs
-            timeRanges.add(Pair(rangeStart, rangeEnd))
-            currentTime = rangeEnd
-        }
-
-        // Verify continuity (currentTime should equal endTime)
-        // assert(currentTime == endTime) { "Time ranges are not continuous: expected $endTime, got $currentTime" }
 
         equity.documentStore.execute { documentStore ->
             val equity = documentStore.get(Equity::class.java, documentStore.getID(equity))
@@ -250,7 +275,7 @@ class CandlePlotter {
             }
         }
 
-        return candles
+        return candles.reversed()
     }
 
     private fun aggregateDataForTimeRange(

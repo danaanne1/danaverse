@@ -239,27 +239,22 @@ class StockDataBrowser(val stocks: Stocks): JPanel(BorderLayout()) {
 
                 // Set a clip rect for the plotting area, accounting for the TitledBorder
                 val insets = insets
-                val border = border
-                val borderInsets = if (border is TitledBorder) {
-                    border.getBorderInsets(this)
-                } else {
-                    Insets(0, 0, 0, 0)
-                }
 
                 val clipRect = Rectangle(
-                    insets.left + borderInsets.left,
-                    insets.top + borderInsets.top,
-                    width - insets.left - insets.right - borderInsets.left - borderInsets.right,
-                    height - insets.top - insets.bottom - borderInsets.top - borderInsets.bottom
+                    insets.left ,
+                    insets.top ,
+                    width - insets.left - insets.right ,
+                    height - insets.top - insets.bottom
                 )
                 g2d.clip = clipRect
 
                 // Pre-transform graphics to map visible space to 100x100 coordinate system
                 val scaleX = clipRect.width / 100.0
                 val scaleY = clipRect.height / 100.0
-                g2d.translate(clipRect.x, clipRect.y)
-                g2d.scale(scaleX, scaleY)
+                g2d.translate(clipRect.x, clipRect.y + clipRect.height)
+                g2d.scale(scaleX, -scaleY)
 
+                // g2d.drawLine(0,0,100,100)
                 // Render candles
                 candlePlotter.plotCandles(selectedEquity!!, selectedTime, g2d)
             } finally {
