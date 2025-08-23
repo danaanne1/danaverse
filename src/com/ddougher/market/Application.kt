@@ -8,6 +8,7 @@ import com.ddougher.market.polygon.BackfilTickers
 import com.ddougher.documentstore.DocumentStore
 import com.ddougher.documentstore.MemoryMappedAssetFactory
 import com.ddougher.documentstore.MemoryMappedDocumentStore
+import com.ddougher.extensions.toJsonString
 import com.ddougher.market.application.StockCrawler
 import com.ddougher.market.application.Swing
 import com.ddougher.remotes.RemoteDocumentStoreClient
@@ -195,18 +196,19 @@ class Application  {
                     val crawler = StockCrawler(docStore)
                     val stocks = docStore.get(Stocks::class.java, "stocks")
                     println("Starting scan for 4% swings...")
-                    crawler.visitEveryDaysMetricByTicker(stocks.tickers().keys.toSortedSet().toList(), startDate, handler = crawler::locateFourPercentSwings)
-                        .sortedWith { o1, o2 ->
-                            o1.ticker.compareTo(o2.ticker).let {
-                                if (it == 0)
-                                    o1.startTimeMs.compareTo(o2.startTimeMs)
-                                else
-                                    it
+                    val f = File("swing_data.txt")
+                    f.writeText(
+                        crawler.visitEveryDaysMetricByTicker(stocks.tickers().keys.toSortedSet().toList(), startDate, handler = crawler::locateFourPercentSwings)
+                            .sortedWith { o1, o2 ->
+                                o1.ticker.compareTo(o2.ticker).let {
+                                    if (it == 0)
+                                        o1.startTimeMs.compareTo(o2.startTimeMs)
+                                    else
+                                        it
+                                }
                             }
-                        }
-                        .forEach {
-                            println(it.toString())
-                        }
+                            .joinToString("\n") { it.toString() }
+                    )
                     println("Done")
                 }
             })
