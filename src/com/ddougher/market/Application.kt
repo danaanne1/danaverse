@@ -213,6 +213,17 @@ class Application  {
                 }
             })
 
+            add(Utils.actionFu("Calculate VWMA10") {
+                GlobalScope.launch {
+                    val startDate = SimpleDateFormat("yyyy-MM-dd").parse("2025-01-01")
+                    val crawler = StockCrawler(docStore)
+                    val stocks = docStore.get(Stocks::class.java, "stocks")
+                    println("Starting Scan")
+                    crawler.visitEveryDaysMetricByTicker(stocks.tickers().keys.toSortedSet().toList(), startDate, handler = crawler::calculateVWMA10)
+                    println("Done")
+                }
+            })
+
 
             // Add action to copy between document stores
             add(Utils.actionFu("Copy Document Store") {

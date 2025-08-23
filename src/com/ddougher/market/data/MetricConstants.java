@@ -16,7 +16,9 @@ public class MetricConstants {
 		CLOSE(4, "The ending price"),
 		VOLUME(5, "Number of shares traded"),
 		VWAP(6, "The volume weighted average price"),
-		TRADESIZE(7, "The number of trades");
+		TRADESIZE(7, "The number of trades"),
+		VWMA(8, "Volume weighted moving average");
+
 		
 		public final int value;
 		public final String description;
@@ -34,7 +36,7 @@ public class MetricConstants {
 	public static final Map<String, String []> technicalFieldList = new ConcurrentHashMap<String, String[]>();
 	
 	static {
-		technicalFieldList.put("ohlc_min", new String []  { "time", "open", "high", "low", "close", "volume", "vwap", "tradesize" } ); // OHLC
+		technicalFieldList.put("ohlc_min", new String []  { "time", "open", "high", "low", "close", "volume", "vwap", "tradesize", "vwma" } ); // OHLC
 	}
 
 	

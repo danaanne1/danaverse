@@ -2,6 +2,7 @@ package com.ddougher.market.application
 
 import com.ddougher.market.data.core.Stocks
 import com.ddougher.documentstore.DocumentStore
+import com.ddougher.documentstore.DocumentStoreAware
 import com.ddougher.market.data.MetricConstants.Candle
 import com.ddougher.market.data.core.Equity
 import kotlinx.coroutines.channels.Channel
@@ -33,8 +34,47 @@ data class Swing(val startTimeMs: Long, val endTimeMs: Long, val swingPercent: D
 
 class StockCrawler(val documentStore: DocumentStore) {
 
+    suspend fun calculateVWMA10(equity: Equity, dayData: Equity.Day,  metricData: List<Array<Number>>): List<Unit> {
+        // ignoring equity and metricData, calculates the VWMA ( volume weighted moving average ) of the day data
+        var printed = false
+        // step 1: create a sliding window for 11 pairs of (price, volume)
+        val slidingWindow = mutableListOf<Pair<Double, Long>>()
+
+        // iterate and replace day data values with a new array containing the VWMA10
+        val values = dayData.values
+        for (i in 0 until values.size) {
+            if (!printed) {
+                // println("${equity.symbol} ${SimpleDateFormat("MM/dd/yyyy").format(Date(values[i][Candle.TIME.value].toLong()))}")
+                printed = true
+            }
+            val avgPrice = (values[i][Candle.CLOSE.value].toDouble() + values[i][Candle.LOW.value].toDouble() + values[i][Candle.HIGH.value].toDouble())
+            if (avgPrice != 0.0 && values[i][Candle.VOLUME.value].toLong() != 0L)
+                slidingWindow.add(Pair(avgPrice/3 , values[i][Candle.VOLUME.value].toLong()))
+            while (slidingWindow.size > 10) { slidingWindow.removeAt(0) }
+            // copy values to a new longer array
+            var newValues = arrayOf<Number>(*values[i])
+            while (newValues.size <= Candle.VWMA.value) newValues = arrayOf<Number>(*newValues, 0.0)
+            if (slidingWindow.isNotEmpty()) {
+                newValues[Candle.VWMA.value]= slidingWindow.sumOf { it.first * it.second } / slidingWindow.sumOf { it.second }
+                values[i] = newValues
+            }
+        }
+
+        try {
+            equity.documentStore.put(dayData)
+        } catch (e: ConcurrentModificationException) {
+            if (printed)
+                println("Concurrent modification exception for ${equity.symbol} ${SimpleDateFormat("MM/dd/yyyy").format(Date(values[0][Candle.TIME.value].toLong()))}")
+            else
+                println("Concurrent modification exception for ${equity.symbol} ")
+        }
+
+        return listOf()
+    }
+
+
     /** find all the stocks that went up by more than 4% in a day */
-    suspend fun locateFourPercentSwings(equity: Equity, metricData: List<Array<Number>>): List<Swing> {
+    suspend fun locateFourPercentSwings(equity: Equity, dayData: Equity.Day,  metricData: List<Array<Number>>): List<Swing> {
         val localLow = LocalTime.of(6,29)
         val localHi = LocalTime.of(13,1)
 
@@ -94,7 +134,7 @@ class StockCrawler(val documentStore: DocumentStore) {
 
     /** Invokes handler for every set of day aggregates for equitiy, beginning from startTime */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T> visitEveryDaysMetricByTicker(tickers: List<String>, startDate: Date, metric:String = "ohlc_min", handler: suspend (Equity, List<Array<Number>>) -> List<T>): List<T> {
+    suspend fun <T> visitEveryDaysMetricByTicker(tickers: List<String>, startDate: Date, metric:String = "ohlc_min", handler: suspend (Equity, Equity.Day, List<Array<Number>>) -> List<T>): List<T> {
         val calendar = Calendar.getInstance().apply { timeInMillis = startDate.time }
         val startYear = calendar[Calendar.YEAR]
         val startDay = calendar[Calendar.DAY_OF_YEAR]
@@ -107,7 +147,7 @@ class StockCrawler(val documentStore: DocumentStore) {
                     }.flatMap { (year, yearData) -> 
                         yearData.days.filter { (day, _) -> year.toInt() > startYear || day.toInt() >= startDay
                     }.flatMap { (_, dayData) ->
-                        handler.invoke(equity, dayData.values)
+                        handler.invoke(equity, dayData, dayData.values)
                     }
                 }
             } ?: listOf<T>()) as List<T>
@@ -116,7 +156,7 @@ class StockCrawler(val documentStore: DocumentStore) {
 
     /** invokes handler for a single days metric */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T> visitSingleDaysMetricByTicker(tickers: List<String>, date: Date, metric:String = "ohlc_min", handler: suspend (Equity, List<Array<Number>>) -> List<T>): List<T> {
+    suspend fun <T> visitSingleDaysMetricByTicker(tickers: List<String>, date: Date, metric:String = "ohlc_min", handler: suspend (Equity, Equity.Day, List<Array<Number>>) -> List<T>): List<T> {
         val calendar = Calendar.getInstance().apply { timeInMillis = date.time }
         val startYear = calendar[Calendar.YEAR]
         val startDay = calendar[Calendar.DAY_OF_YEAR]
@@ -124,7 +164,7 @@ class StockCrawler(val documentStore: DocumentStore) {
             (equity.metrics[metric]?.let { metric ->
                 metric.years[startYear.toString()]?.let { year ->
                     year.days[startDay.toString()]?.let { day ->
-                        handler.invoke(equity, day.values)
+                        handler.invoke(equity, day, day.values)
                     }
                 }
             } ?: listOf<T>()) as List<T>
